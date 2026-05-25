@@ -6,7 +6,7 @@ A Progressive Web App (PWA) built to collect audio recordings of the **Burushask
 
 ## 📖 About
 
-Burushaski is a language isolate spoken primarily in the Hunza-Nagar region of Gilgit-Baltistan, Pakistan. This app was built to facilitate structured audio data collection from native speakers as part of a language documentation effort.
+Burushaski is a language isolate spoken primarily in the Hunza region of Gilgit-Baltistan, Pakistan. This app was built to facilitate structured audio data collection from native speakers as part of a language documentation effort.
 
 Participants are given a unique ID to log in, select sentence categories, record themselves speaking, review their recordings, and submit — all without needing a stable internet connection.
 
@@ -64,8 +64,9 @@ Many of our participants are native Burushaski speakers living in Hunza, a mount
 - It is lightweight and works on **low-end devices**
 
 ---
-
 ## 📁 Project Structure
+
+```
 ├── backend/          # Backend API
 ├── public/           # Static assets and PWA manifest
 ├── src/              # React source code
@@ -73,3 +74,4 @@ Many of our participants are native Burushaski speakers living in Hunza, a mount
 ├── vite.config.js    # Vite configuration
 ├── tailwind.config.js
 └── vercel.json       # Deployment config
+```
