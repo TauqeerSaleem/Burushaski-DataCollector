@@ -98,6 +98,8 @@ export default function Instructions() {
             </p>
           </div>
 
+
+
           {/* Step 3 */}
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">

@@ -11,6 +11,8 @@ export default function Onboarding() {
   const [notificationConsent, setNotificationConsent] = useState(false);
   const [idError, setIdError] = useState("");
 
+
+  
   const { setUser } = useUser();
   const navigate = useNavigate();
 

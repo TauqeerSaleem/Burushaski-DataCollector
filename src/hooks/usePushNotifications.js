@@ -2,6 +2,7 @@ import { supabase } from "../utils/supabase";
 
 export async function subscribeToPush(user) {
   try {
+
     // 1️⃣ Check browser support
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       console.log("Push notifications not supported");
@@ -26,6 +27,7 @@ export async function subscribeToPush(user) {
     // 4️⃣ Get existing subscription or create new
     let subscription = await registration.pushManager.getSubscription();
 
+
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
@@ -35,6 +37,7 @@ export async function subscribeToPush(user) {
       });
     }
 
+    
     // 5️⃣ Store subscription in Supabase
     const { error } = await supabase.from("push_subscriptions").upsert(
       {
