@@ -1,6 +1,20 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { DEFAULT_USER_ROLE, normalizeUserRole } from "../utils/roles";
 
 const UserContext = createContext(null);
+
+function normalizeUser(user) {
+  if (!user) return null;
+
+  const userId = user.participantId || user.userId || user.id || user.username;
+
+  return {
+    ...user,
+    participantId: user.participantId || userId,
+    username: user.username || user.participantId || "",
+    role: normalizeUserRole(user.role || DEFAULT_USER_ROLE),
+  };
+}
 
 export function UserProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -11,7 +25,7 @@ export function UserProvider({ children }) {
     const savedUser = localStorage.getItem("burushaski_user");
     if (savedUser) {
       try {
-        setUser(JSON.parse(savedUser));
+        setUser(normalizeUser(JSON.parse(savedUser)));
       } catch (err) {
         console.error("Failed to parse saved user:", err);
         localStorage.removeItem("burushaski_user");
@@ -29,8 +43,12 @@ export function UserProvider({ children }) {
     }
   }, [user]);
 
+  const updateUser = (nextUser) => {
+    setUser(normalizeUser(nextUser));
+  };
+
   return (
-    <UserContext.Provider value={{ user, setUser, loading }}>
+    <UserContext.Provider value={{ user, setUser: updateUser, loading }}>
       {children}
     </UserContext.Provider>
   );

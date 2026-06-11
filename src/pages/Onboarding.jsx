@@ -3,12 +3,12 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import { subscribeToPush } from "../hooks/usePushNotifications";
+import { DEFAULT_USER_ROLE } from "../utils/roles";
 
 export default function Onboarding() {
   const [participantId, setParticipantId] = useState("");
   const [dialect, setDialect] = useState("");
   const [gender, setGender] = useState("");
-  const [notificationConsent, setNotificationConsent] = useState(false);
   const [idError, setIdError] = useState("");
 
 
@@ -41,7 +41,7 @@ export default function Onboarding() {
       return;
     }
 
-    const userData = { participantId, dialect, gender };
+    const userData = { participantId, username: participantId, dialect, gender, role: DEFAULT_USER_ROLE };
     
     // Only subscribe if user granted permission
     if (Notification.permission === 'granted') {

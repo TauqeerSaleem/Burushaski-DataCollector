@@ -1,12 +1,13 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useUser } from "./context/UserContext";
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 
 import Onboarding from "./pages/Onboarding";
 import Instructions from "./pages/Instructions";
-import Dashboard from "./pages/Dashboard";
+import RoleDashboard from "./pages/RoleDashboard";
 import ModuleView from "./pages/ModuleView";
 import Stats from "./pages/Stats";
+import VolunteerRoute from "./pages/VolunteerRoute";
 import { syncPendingRecordings } from "./utils/syncRecordings";
 import { registerSW } from 'virtual:pwa-register';
 
@@ -54,9 +55,9 @@ useEffect(() => {
       <Routes>
         <Route path="/" element={<Onboarding />} />
         <Route path="/instructions" element={<Instructions />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/module/:moduleId" element={<ModuleView />} />
-        <Route path="/stats" element={<Stats />} />
+        <Route path="/dashboard" element={<RoleDashboard />} />
+        <Route path="/module/:moduleId" element={<VolunteerRoute><ModuleView /></VolunteerRoute>} />
+        <Route path="/stats" element={<VolunteerRoute><Stats /></VolunteerRoute>} />
       </Routes>
     </BrowserRouter>
   );

@@ -6,6 +6,7 @@ import webpush from "web-push";
 import { createClient } from "@supabase/supabase-js";
 import { startCronJobs } from "./jobs/cronJobs.js";
 import reminderRoutes from "./routes/reminders.js";
+import userRoutes from "./routes/users.js";
 
 dotenv.config();
 
@@ -22,7 +23,7 @@ app.use(cors());
 // ============================================
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
-  process.env.VITE_SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
 );
 
 console.log("✅ Supabase initialized");
@@ -48,6 +49,8 @@ app.get("/", (req, res) => {
     endpoints: {
       health: "GET /health",
       sendReminder: "POST /api/send-reminder",
+      signup: "POST /api/users/signup",
+      login: "POST /api/users/login",
       subscriptions: "GET /api/subscriptions",
       logs: "GET /api/notification-logs",
     },
@@ -62,6 +65,7 @@ app.get("/health", (req, res) => {
 // API ROUTES
 // ============================================
 app.use("/api", reminderRoutes);
+app.use("/api", userRoutes);
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE
