@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import express from "express";
 import { supabase } from "../server.js";
 import { normalizeUserRole } from "../utils/roles.js";
@@ -6,7 +5,6 @@ import { normalizeUserRole } from "../utils/roles.js";
 const router = express.Router();
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9._-]{3,32}$/;
-const LEGACY_PARTICIPANT_ID_PATTERN = /^P-\d+$/i;
 
 function cleanText(value) {
   if (value === undefined || value === null) return null;
@@ -30,12 +28,18 @@ function validateUsername(username) {
   return USERNAME_PATTERN.test(username);
 }
 
-function createParticipantId(username) {
-  if (LEGACY_PARTICIPANT_ID_PATTERN.test(username)) {
-    return username.toUpperCase();
-  }
+async function createNextParticipantId() {
+  const { data } = await supabase
+    .from("app_users")
+    .select("participant_id")
+    .like("participant_id", "P-%");
 
-  return `B-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const nums = (data || [])
+    .map((r) => parseInt(r.participant_id.slice(2), 10))
+    .filter((n) => !isNaN(n));
+
+  const max = nums.length > 0 ? Math.max(...nums) : 0;
+  return `P-${String(max + 1).padStart(3, "0")}`;
 }
 
 function toClientUser(row) {
@@ -55,13 +59,10 @@ function toClientUser(row) {
   };
 }
 
-function userPayload(body, { includeParticipantId = false } = {}) {
+function userPayload(body) {
   const username = normalizeUsername(body.username);
 
   return {
-    ...(includeParticipantId
-      ? { participant_id: createParticipantId(username) }
-      : {}),
     username,
     role: normalizeUserRole(body.role),
     display_name: cleanText(body.name || body.displayName),
@@ -99,9 +100,10 @@ router.post("/users/signup", async (req, res) => {
       return res.status(409).json({ error: "Username is already taken." });
     }
 
+    const participantId = await createNextParticipantId();
     const { data: createdUser, error: createError } = await supabase
       .from("app_users")
-      .insert(userPayload({ ...req.body, username }, { includeParticipantId: true }))
+      .insert({ ...userPayload({ ...req.body, username }), participant_id: participantId })
       .select("*")
       .single();
 
