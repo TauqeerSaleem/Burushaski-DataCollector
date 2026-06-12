@@ -3,6 +3,8 @@ import { useUser } from "./context/UserContext";
 import { useEffect } from "react";
 
 import Onboarding from "./pages/Onboarding";
+
+import Signup from "./pages/signUp";
 import Instructions from "./pages/Instructions";
 import RoleDashboard from "./pages/RoleDashboard";
 import ModuleView from "./pages/ModuleView";
@@ -54,6 +56,8 @@ useEffect(() => {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Onboarding />} />
+        
+        <Route path="/signup" element={<Signup />} />
         <Route path="/instructions" element={<Instructions />} />
         <Route path="/dashboard" element={<RoleDashboard />} />
         <Route path="/module/:moduleId" element={<VolunteerRoute><ModuleView /></VolunteerRoute>} />
