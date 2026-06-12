@@ -3,11 +3,33 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import { subscribeToPush } from "../hooks/usePushNotifications";
-import { DEFAULT_USER_ROLE } from "../utils/roles";
+import { USER_ROLES, DEFAULT_USER_ROLE } from "../utils/roles";
+
+const COUNTRIES = [
+  "Afghanistan","Albania","Algeria","Andorra","Angola","Argentina","Armenia","Australia","Austria","Azerbaijan",
+  "Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin","Bhutan","Bolivia",
+  "Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi","Cambodia","Cameroon","Canada",
+  "Central African Republic","Chad","Chile","China","Colombia","Comoros","Congo","Costa Rica","Croatia","Cuba",
+  "Cyprus","Czech Republic","Denmark","Djibouti","Dominican Republic","Ecuador","Egypt","El Salvador","Estonia","Ethiopia",
+  "Fiji","Finland","France","Gabon","Gambia","Georgia","Germany","Ghana","Greece","Guatemala",
+  "Guinea","Guyana","Haiti","Honduras","Hungary","Iceland","India","Indonesia","Iran","Iraq",
+  "Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kuwait","Kyrgyzstan",
+  "Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Lithuania","Luxembourg","Madagascar","Malawi",
+  "Malaysia","Maldives","Mali","Malta","Mauritania","Mauritius","Mexico","Moldova","Monaco","Mongolia",
+  "Montenegro","Morocco","Mozambique","Myanmar","Namibia","Nepal","Netherlands","New Zealand","Nicaragua","Niger",
+  "Nigeria","North Korea","North Macedonia","Norway","Oman","Pakistan","Palestine","Panama","Papua New Guinea","Paraguay",
+  "Peru","Philippines","Poland","Portugal","Qatar","Romania","Russia","Rwanda","Saudi Arabia","Senegal",
+  "Serbia","Sierra Leone","Singapore","Slovakia","Slovenia","Somalia","South Africa","South Korea","South Sudan","Spain",
+  "Sri Lanka","Sudan","Sweden","Switzerland","Syria","Taiwan","Tajikistan","Tanzania","Thailand","Togo",
+  "Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Uganda","Ukraine","United Arab Emirates","United Kingdom","United States","Uruguay",
+  "Uzbekistan","Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"
+];
 
 export default function Signup() {
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
+
+  const [role, setRole] = useState(USER_ROLES.VOLUNTEER);
 
   const [consent, setConsent] = useState("");
 
@@ -28,12 +50,23 @@ export default function Signup() {
   const [comfortLang, setComfortLang] = useState("");
   const [comfortLangError, setComfortLangError] = useState("");
 
+  const [birthCountry, setBirthCountry] = useState("");
+  const [birthCity, setBirthCity] = useState("");
+  const [birthCityError, setBirthCityError] = useState("");
+
+  const [livedCountry, setLivedCountry] = useState("");
+  const [livedCity, setLivedCity] = useState("");
+  const [livedCityError, setLivedCityError] = useState("");
+  const [placesLived, setPlacesLived] = useState([]);
+  const [placesLivedError, setPlacesLivedError] = useState("");
+
   const { setUser } = useUser();
   const navigate = useNavigate();
 
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
   const validateMobile = (val) => /^03\d{2}-?\d{7}$/.test(val.replace(/\s/g, ""));
   const validateNumber = (val) => /^\d+$/.test(val);
+  const validateCityName = (val) => /^[A-Za-z\s'.-]{2,}$/.test(val.trim());
 
   const handleEmailChange = (e) => {
     const value = e.target.value;
@@ -75,6 +108,41 @@ export default function Signup() {
     }
   };
 
+  const handleBirthCityChange = (e) => {
+    const value = e.target.value;
+    setBirthCity(value);
+    if (value && !validateCityName(value)) {
+      setBirthCityError("Enter a valid city name");
+    } else {
+      setBirthCityError("");
+    }
+  };
+
+  const handleLivedCityChange = (e) => {
+    const value = e.target.value;
+    setLivedCity(value);
+    if (value && !validateCityName(value)) {
+      setLivedCityError("Enter a valid city name");
+    } else {
+      setLivedCityError("");
+    }
+  };
+
+  const addPlaceLived = () => {
+    if (!livedCountry || !livedCity || !validateCityName(livedCity)) {
+      setPlacesLivedError("Select a country and enter a valid city before adding");
+      return;
+    }
+    setPlacesLived((prev) => [...prev, { country: livedCountry, city: livedCity.trim() }]);
+    setLivedCountry("");
+    setLivedCity("");
+    setPlacesLivedError("");
+  };
+
+  const removePlaceLived = (index) => {
+    setPlacesLived((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const toggleDialect = (value) => {
     setDialects((prev) =>
       prev.includes(value)
@@ -92,6 +160,7 @@ export default function Signup() {
   const canSubmit =
     email &&
     validateEmail(email) &&
+    role &&
     consent === "yes" &&
     contactPref &&
     (contactPref !== "mobile" || (mobile && validateMobile(mobile))) &&
@@ -100,7 +169,11 @@ export default function Signup() {
     dialects.length > 0 &&
     numOtherLangs !== "" &&
     validateNumber(numOtherLangs) &&
-    !comfortLangError;
+    !comfortLangError &&
+    birthCountry &&
+    birthCity &&
+    validateCityName(birthCity) &&
+    placesLived.length > 0;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -110,7 +183,7 @@ export default function Signup() {
       username: email,
       dialect: primaryDialect(),
       gender,
-      role: DEFAULT_USER_ROLE,
+      role,
       ageGroup,
       contactPref,
       mobile,
@@ -119,6 +192,8 @@ export default function Signup() {
       numOtherLangs,
       otherLangs,
       comfortLang,
+      birthplace: { country: birthCountry, city: birthCity.trim() },
+      placesLived,
     };
 
     if (Notification.permission === "granted") {
@@ -130,8 +205,8 @@ export default function Signup() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-8">
-      <div className="w-full max-w-sm space-y-3">
+    <div className="min-h-screen px-4 py-8">
+      <div className="w-full max-w-xl mx-auto space-y-3">
 
         <button
           onClick={() => navigate("/")}
@@ -154,6 +229,52 @@ export default function Signup() {
               We are collecting short audio recordings of Burushaski speech
               along with basic demographic information for academic research.
             </p>
+          </div>
+
+          {/* Role selection */}
+          <div className="space-y-2">
+            <label className="text-xs text-gray-400">I'm signing up as *</label>
+            <div className="grid grid-cols-1 gap-2">
+              {[
+                {
+                  value: USER_ROLES.VOLUNTEER,
+                  title: "Volunteer",
+                  desc: "Record short Burushaski sentences for the project.",
+                },
+                {
+                  value: USER_ROLES.CONTENT_CONTRIBUTOR,
+                  title: "Content Contributor",
+                  desc: "Upload or link Burushaski audio/video content.",
+                },
+                {
+                  value: USER_ROLES.RESEARCHER,
+                  title: "Researcher",
+                  desc: "Upload interviews and longer-form recordings.",
+                },
+              ].map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-start gap-3 rounded-lg border px-3 py-2 cursor-pointer transition ${
+                    role === opt.value
+                      ? "border-yellow-400 bg-neutral-900"
+                      : "border-neutral-700 bg-neutral-900/50 hover:bg-neutral-900"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="role"
+                    value={opt.value}
+                    checked={role === opt.value}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="accent-yellow-400 mt-1"
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-white">{opt.title}</p>
+                    <p className="text-xs text-gray-400">{opt.desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
 
           {/* Form */}
@@ -268,6 +389,88 @@ export default function Signup() {
                 <option value="female">Female</option>
                 <option value="prefer_not_to_say">Prefer not to say</option>
               </select>
+            </div>
+
+            {/* Place of birth */}
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Place of birth *</label>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                  value={birthCountry}
+                  onChange={(e) => setBirthCountry(e.target.value)}
+                >
+                  <option value="">Country</option>
+                  {COUNTRIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <input
+                  className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
+                    birthCityError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
+                  }`}
+                  placeholder="City"
+                  value={birthCity}
+                  onChange={handleBirthCityChange}
+                />
+              </div>
+              {birthCityError && <p className="text-xs text-red-400">{birthCityError}</p>}
+            </div>
+
+            {/* Places lived */}
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">Places lived *</label>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                  value={livedCountry}
+                  onChange={(e) => setLivedCountry(e.target.value)}
+                >
+                  <option value="">Country</option>
+                  {COUNTRIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <input
+                  className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
+                    livedCityError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
+                  }`}
+                  placeholder="City"
+                  value={livedCity}
+                  onChange={handleLivedCityChange}
+                />
+              </div>
+              {livedCityError && <p className="text-xs text-red-400">{livedCityError}</p>}
+
+              <button
+                type="button"
+                onClick={addPlaceLived}
+                className="w-full rounded-lg bg-neutral-800 border border-neutral-700 py-1.5 text-sm text-white hover:bg-neutral-700"
+              >
+                + Add place
+              </button>
+
+              {placesLivedError && <p className="text-xs text-red-400">{placesLivedError}</p>}
+
+              {placesLived.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {placesLived.map((p, i) => (
+                    <span
+                      key={`${p.country}-${p.city}-${i}`}
+                      className="flex items-center gap-1 bg-neutral-800 border border-neutral-700 rounded-full px-3 py-1 text-xs text-white"
+                    >
+                      {p.city}, {p.country}
+                      <button
+                        type="button"
+                        onClick={() => removePlaceLived(i)}
+                        className="text-gray-400 hover:text-red-400 ml-1"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Dialect (multi-select) */}
