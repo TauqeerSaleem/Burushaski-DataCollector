@@ -13,7 +13,7 @@ export default function Instructions() {
 
     // No user at all → go to onboarding
     if (!user) {
-      navigate("/", { replace: true });
+      navigate("/login", { replace: true });
       return;
     }
 

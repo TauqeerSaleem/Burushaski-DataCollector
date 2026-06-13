@@ -2,7 +2,10 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useUser } from "./context/UserContext";
 import { useEffect } from "react";
 
-import Onboarding from "./pages/Onboarding";
+import AuthRedirect from "./pages/AuthRedirect";
+import Login from "./pages/Login";
+import Signup from "./pages/Signup";
+import Consent from "./pages/Consent";
 import Instructions from "./pages/Instructions";
 import RoleDashboard from "./pages/RoleDashboard";
 import ModuleView from "./pages/ModuleView";
@@ -53,7 +56,10 @@ useEffect(() => {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Onboarding />} />
+        <Route path="/" element={<AuthRedirect />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/consent" element={<Consent />} />
         <Route path="/instructions" element={<Instructions />} />
         <Route path="/dashboard" element={<RoleDashboard />} />
         <Route path="/module/:moduleId" element={<VolunteerRoute><ModuleView /></VolunteerRoute>} />

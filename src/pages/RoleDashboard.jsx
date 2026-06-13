@@ -40,7 +40,7 @@ export default function RoleDashboard() {
   const { user } = useUser();
 
   if (!user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   const role = normalizeUserRole(user.role);

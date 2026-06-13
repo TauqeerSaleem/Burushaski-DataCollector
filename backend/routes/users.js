@@ -87,6 +87,10 @@ router.post("/users/signup", async (req, res) => {
       });
     }
 
+    if (!req.body.consentAccepted && !req.body.consent_accepted) {
+      return res.status(400).json({ error: "Consent must be accepted to sign up." });
+    }
+
     const { data: existingUser, error: lookupError } = await supabase
       .from("app_users")
       .select("id")

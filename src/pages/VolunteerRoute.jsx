@@ -6,7 +6,7 @@ export default function VolunteerRoute({ children }) {
   const { user } = useUser();
 
   if (!user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   if (normalizeUserRole(user.role) !== USER_ROLES.VOLUNTEER) {

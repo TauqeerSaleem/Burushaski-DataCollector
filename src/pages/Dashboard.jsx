@@ -15,7 +15,7 @@ export default function Dashboard() {
 
   // 🔐 AUTH GUARD — must be first
   if (!user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   const [completedMap, setCompletedMap] = useState({});
