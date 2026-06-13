@@ -10,7 +10,7 @@ import { sendReminderNotification } from "../utils/notify";
 
 export default function Dashboard() {
   const data = useSentences();
-  const { user } = useUser();
+  const { user, setUser } = useUser();
   const navigate = useNavigate();
 
   // 🔐 AUTH GUARD — must be first
@@ -82,6 +82,12 @@ export default function Dashboard() {
     }
   }, [reminderMessage]);
 
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem("hasSeenInstructions");
+    navigate("/", { replace: true });
+  };
+
   // ✅ JSX MUST BE RETURNED
   return (
     <div className="safe-top p-4 space-y-4">
@@ -108,6 +114,13 @@ export default function Dashboard() {
             className="text-sm text-white font-bold bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"
           >
             📖 View Instructions
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-sm text-white font-bold bg-red-600 hover:bg-red-700 px-3 py-1 rounded"
+          >
+            Logout
           </button>
         </div>
       </div>

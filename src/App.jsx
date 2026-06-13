@@ -14,37 +14,31 @@ import VolunteerRoute from "./pages/VolunteerRoute";
 import { syncPendingRecordings } from "./utils/syncRecordings";
 import { registerSW } from 'virtual:pwa-register';
 
-// Register the service worker when the app loads
-
 export default function App() {
   const { loading } = useUser();
   useEffect(() => {
-  registerSW();  // Automatically registers the service worker
-}, []);
+    registerSW();
+  }, []);
 
-const { user } = useUser();
+  const { user } = useUser();
 
-useEffect(() => {
-  const handleOnline = () => {
-    console.log("🌐 Back online");
-    syncPendingRecordings(user);
-  };
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log("🌐 Back online");
+      syncPendingRecordings(user);
+    };
 
-  window.addEventListener("online", handleOnline);
+    window.addEventListener("online", handleOnline);
 
-  // Run once on app start
-  if (user) {
-    syncPendingRecordings(user);
-  }
+    if (user) {
+      syncPendingRecordings(user);
+    }
 
-  return () => {
-    window.removeEventListener("online", handleOnline);
-  };
-}, [user]);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [user]);
 
-
-
-  // Wait until user is loaded from localStorage
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-blue-900 to-blue-500 flex items-center justify-center text-white">

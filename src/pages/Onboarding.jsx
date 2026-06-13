@@ -3,29 +3,22 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import { subscribeToPush } from "../hooks/usePushNotifications";
-import { DEFAULT_USER_ROLE } from "../utils/roles";
+import { USER_ROLES, DEFAULT_USER_ROLE } from "../utils/roles";
 
 export default function Onboarding() {
   const [participantId, setParticipantId] = useState("");
-  const [dialect, setDialect] = useState("");
-  const [gender, setGender] = useState("");
   const [idError, setIdError] = useState("");
+  const [role, setRole] = useState(DEFAULT_USER_ROLE);
 
-
-  
   const { setUser } = useUser();
   const navigate = useNavigate();
 
-  // Validate participant ID format (P-XXX where XXX is a number)
-  const validateParticipantId = (id) => {
-    const regex = /^P-\d+$/;
-    return regex.test(id);
-  };
+  const validateParticipantId = (id) => /^P-\d+$/.test(id);
 
   const handleIdChange = (e) => {
     const value = e.target.value.toUpperCase();
     setParticipantId(value);
-    
+
     if (value && !validateParticipantId(value)) {
       setIdError("Format must be P-XXX (e.g., P-001, P-123)");
     } else {
@@ -33,18 +26,17 @@ export default function Onboarding() {
     }
   };
 
-  const submit = async () => {
-    if (!participantId || !dialect || !gender) return;
-    
+  const handleLogin = async () => {
+    if (!participantId) return;
+
     if (!validateParticipantId(participantId)) {
       setIdError("Invalid format. Use P-XXX (e.g., P-001)");
       return;
     }
 
-    const userData = { participantId, username: participantId, dialect, gender, role: DEFAULT_USER_ROLE };
-    
-    // Only subscribe if user granted permission
-    if (Notification.permission === 'granted') {
+    const userData = { participantId, username: participantId, role };
+
+    if (Notification.permission === "granted") {
       await subscribeToPush(userData);
     }
 
@@ -66,73 +58,48 @@ export default function Onboarding() {
           </p>
         </div>
 
-        {/* Form */}
-        <div className="space-y-4">
+        {/* Login */}
+        <div className="space-y-3">
+          <input
+            className={`w-full bg-transparent border-0 border-b px-1 py-2 text-sm text-white placeholder-gray-500 focus:outline-none ${
+              idError ? "border-red-500" : "border-neutral-600 focus:border-yellow-400"
+            }`}
+            placeholder="Enter your ID (e.g. P-023)"
+            value={participantId}
+            onChange={handleIdChange}
+          />
+          {idError && <p className="text-xs text-red-400">{idError}</p>}
+          {!idError && participantId && validateParticipantId(participantId) && (
+            <p className="text-xs text-green-400">✓ Valid format</p>
+          )}
 
-          {/* Participant ID */}
-          <div className="space-y-1">
-            <label className="text-xs text-gray-400">
-              Participant ID
-            </label>
-            <input
-              className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
-                idError 
-                  ? "border-red-500 focus:ring-red-400" 
-                  : "border-neutral-700 focus:ring-yellow-400"
-              }`}
-              placeholder="e.g. P-023"
-              value={participantId}
-              onChange={handleIdChange}
-            />
-            {idError && (
-              <p className="text-xs text-red-400">{idError}</p>
-            )}
-            {!idError && participantId && validateParticipantId(participantId) && (
-              <p className="text-xs text-green-400">✓ Valid format</p>
-            )}
-          </div>
+          {/* Role */}
+          <select
+            className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+          >
+            <option value={USER_ROLES.VOLUNTEER}>Volunteer</option>
+            <option value={USER_ROLES.CONTENT_CONTRIBUTOR}>Content Contributor</option>
+            <option value={USER_ROLES.RESEARCHER}>Researcher</option>
+            <option value={USER_ROLES.ADMIN}>Admin</option>
+          </select>
 
-          {/* Dialect */}
-          <div className="space-y-1">
-            <label className="text-xs text-gray-400">
-              Dialect
-            </label>
-            <select
-              className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-              value={dialect}
-              onChange={(e) => setDialect(e.target.value)}
-            >
-              <option value="">Select dialect</option>
-              <option value="yasin">Yasin</option>
-              <option value="hunza">Hunza</option>
-            </select>
-          </div>
-
-          {/* Gender */}
-          <div className="space-y-1">
-            <label className="text-xs text-gray-400">
-              Gender
-            </label>
-            <select
-              className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-              value={gender}
-              onChange={(e) => setGender(e.target.value)}
-            >
-              <option value="">Select gender</option>
-              <option value="female">Female</option>
-              <option value="male">Male</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
+          <button
+            onClick={handleLogin}
+            disabled={!participantId || !validateParticipantId(participantId)}
+            className="w-full rounded-lg bg-yellow-400 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Log In
+          </button>
         </div>
 
-        {/* CTA */}
+        {/* Sign Up */}
         <button
-          onClick={submit}
-          disabled={!participantId || !dialect || !gender || !validateParticipantId(participantId)}
-          className="w-full rounded-lg bg-yellow-400 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={() => navigate("/signup")}
+          className="w-full rounded-lg bg-neutral-900 border border-neutral-700 py-2 text-sm font-semibold text-white hover:bg-neutral-800"
         >
-          Continue
+          New User? Sign Up
         </button>
 
         {/* Footer */}
