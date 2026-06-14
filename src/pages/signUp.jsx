@@ -1,9 +1,8 @@
-//SIGNUP.JSX
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
-import { subscribeToPush } from "../hooks/usePushNotifications";
-import { USER_ROLES, DEFAULT_USER_ROLE } from "../utils/roles";
+import { USER_ROLES } from "../utils/roles";
+import { saveSignupDraft } from "../utils/signupDraft";
 
 const COUNTRIES = [
   "Afghanistan","Albania","Algeria","Andorra","Angola","Argentina","Armenia","Australia","Austria","Azerbaijan",
@@ -26,12 +25,10 @@ const COUNTRIES = [
 ];
 
 export default function Signup() {
-  const [email, setEmail] = useState("");
-  const [emailError, setEmailError] = useState("");
+  const [username, setUsername] = useState("");
+  const [usernameError, setUsernameError] = useState("");
 
   const [role, setRole] = useState(USER_ROLES.VOLUNTEER);
-
-  const [consent, setConsent] = useState("");
 
   const [contactPref, setContactPref] = useState("");
   const [mobile, setMobile] = useState("");
@@ -60,21 +57,26 @@ export default function Signup() {
   const [placesLived, setPlacesLived] = useState([]);
   const [placesLivedError, setPlacesLivedError] = useState("");
 
-  const { setUser } = useUser();
+  const { user } = useUser();
   const navigate = useNavigate();
 
-  const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+  if (user) {
+    navigate("/dashboard", { replace: true });
+    return null;
+  }
+
+  const validateUsername = (val) => /^[a-zA-Z0-9._-]{3,32}$/.test(val);
   const validateMobile = (val) => /^03\d{2}-?\d{7}$/.test(val.replace(/\s/g, ""));
   const validateNumber = (val) => /^\d+$/.test(val);
   const validateCityName = (val) => /^[A-Za-z\s'.-]{2,}$/.test(val.trim());
 
-  const handleEmailChange = (e) => {
+  const handleUsernameChange = (e) => {
     const value = e.target.value;
-    setEmail(value);
-    if (value && !validateEmail(value)) {
-      setEmailError("Enter a valid email address");
+    setUsername(value);
+    if (value && !validateUsername(value)) {
+      setUsernameError("3–32 characters, letters, numbers, dots, underscores, hyphens only");
     } else {
-      setEmailError("");
+      setUsernameError("");
     }
   };
 
@@ -158,10 +160,9 @@ export default function Signup() {
   };
 
   const canSubmit =
-    email &&
-    validateEmail(email) &&
+    username &&
+    validateUsername(username) &&
     role &&
-    consent === "yes" &&
     contactPref &&
     (contactPref !== "mobile" || (mobile && validateMobile(mobile))) &&
     ageGroup &&
@@ -175,12 +176,11 @@ export default function Signup() {
     validateCityName(birthCity) &&
     placesLived.length > 0;
 
-  const submit = async () => {
+  const submit = () => {
     if (!canSubmit) return;
 
-    const userData = {
-      email,
-      username: email,
+    const draft = {
+      username,
       dialect: primaryDialect(),
       gender,
       role,
@@ -196,24 +196,13 @@ export default function Signup() {
       placesLived,
     };
 
-    if (Notification.permission === "granted") {
-      await subscribeToPush(userData);
-    }
-
-    setUser(userData);
-    navigate("/instructions", { replace: true });
+    saveSignupDraft(draft);
+    navigate("/consent");
   };
 
   return (
     <div className="min-h-screen px-4 py-8">
       <div className="w-full max-w-xl mx-auto space-y-3">
-
-        <button
-          onClick={() => navigate("/")}
-          className="text-sm text-gray-400 hover:text-yellow-400"
-        >
-          ← Back to Login
-        </button>
 
         <div className="rounded-2xl bg-gradient-to-b from-neutral-900 to-neutral-950 p-6 shadow-2xl border border-neutral-800 space-y-6">
 
@@ -277,47 +266,23 @@ export default function Signup() {
             </div>
           </div>
 
-          {/* Form */}
           <div className="space-y-4">
 
-            {/* Email */}
+            {/* Username */}
             <div className="space-y-1">
-              <label className="text-xs text-gray-400">Email *</label>
+              <label className="text-xs text-gray-400">Username *</label>
               <input
-                type="email"
+                type="text"
                 className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
-                  emailError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
+                  usernameError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
                 }`}
-                placeholder="you@example.com"
-                value={email}
-                onChange={handleEmailChange}
+                placeholder="e.g. ali_hunza"
+                value={username}
+                onChange={handleUsernameChange}
+                autoCapitalize="none"
+                spellCheck={false}
               />
-              {emailError && <p className="text-xs text-red-400">{emailError}</p>}
-            </div>
-
-            {/* Consent */}
-            <div className="space-y-1">
-              <label className="text-xs text-gray-400">
-                Do you consent to providing demographic information for research purposes? *
-              </label>
-              <div className="flex gap-4 pt-1">
-                {["yes", "no"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-2 text-sm text-white">
-                    <input
-                      type="radio"
-                      name="consent"
-                      value={opt}
-                      checked={consent === opt}
-                      onChange={(e) => setConsent(e.target.value)}
-                      className="accent-yellow-400"
-                    />
-                    {opt === "yes" ? "Yes" : "No"}
-                  </label>
-                ))}
-              </div>
-              {consent === "no" && (
-                <p className="text-xs text-red-400">Consent is required to sign up</p>
-              )}
+              {usernameError && <p className="text-xs text-red-400">{usernameError}</p>}
             </div>
 
             {/* Contact preference */}
@@ -342,7 +307,7 @@ export default function Signup() {
               </select>
             </div>
 
-            {/* Mobile number (only if mobile preferred) */}
+            {/* Mobile number */}
             {contactPref === "mobile" && (
               <div className="space-y-1">
                 <label className="text-xs text-gray-400">Mobile Number *</label>
@@ -473,7 +438,7 @@ export default function Signup() {
               )}
             </div>
 
-            {/* Dialect (multi-select) */}
+            {/* Dialect */}
             <div className="space-y-1">
               <label className="text-xs text-gray-400">
                 Which Burushaski dialect do you primarily speak? *
@@ -561,18 +526,19 @@ export default function Signup() {
             </div>
           </div>
 
-          {/* CTA */}
           <button
             onClick={submit}
             disabled={!canSubmit}
             className="w-full rounded-lg bg-yellow-400 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Sign Up
+            Next: Review Consent Form
           </button>
 
-          {/* Footer */}
           <p className="text-center text-xs text-gray-500">
-            Your data is anonymous and used only for research.
+            Already have an account?{" "}
+            <Link to="/login" className="text-yellow-400 hover:text-yellow-300 underline">
+              Log in
+            </Link>
           </p>
         </div>
       </div>
