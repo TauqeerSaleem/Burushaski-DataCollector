@@ -3,18 +3,28 @@ import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
-const supabaseUrl =
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+function envValue(name) {
+  const value = process.env[name]?.trim();
 
+  if (!value || value === "???" || value.startsWith("YOUR_")) {
+    return null;
+  }
+
+  return value;
+}
+
+const supabaseUrl = envValue("SUPABASE_URL") || envValue("VITE_SUPABASE_URL");
+
+const serviceRoleKey = envValue("SUPABASE_SERVICE_ROLE_KEY");
 const supabaseKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.SUPABASE_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY;
+  serviceRoleKey ||
+  envValue("SUPABASE_KEY") ||
+  envValue("VITE_SUPABASE_ANON_KEY");
 
 if (!supabaseUrl || !supabaseKey) {
   throw new Error("Missing Supabase backend environment variables.");
 }
 
-export const hasServiceRoleKey = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+export const hasServiceRoleKey = Boolean(serviceRoleKey);
 
 export const supabase = createClient(supabaseUrl, supabaseKey);

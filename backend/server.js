@@ -32,11 +32,14 @@ app.use(cors({ origin: allowedOrigins() }));
 // ============================================
 // CONFIGURE WEB PUSH
 // ============================================
-if (process.env.VITE_VAPID_PUBLIC_KEY && process.env.VITE_VAPID_PRIVATE_KEY) {
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || process.env.VITE_VAPID_PRIVATE_KEY;
+
+if (vapidPublicKey && vapidPrivateKey) {
   webpush.setVapidDetails(
     "mailto:your-research-email@example.com",
-    process.env.VITE_VAPID_PUBLIC_KEY,
-    process.env.VITE_VAPID_PRIVATE_KEY
+    vapidPublicKey,
+    vapidPrivateKey
   );
 }
 
