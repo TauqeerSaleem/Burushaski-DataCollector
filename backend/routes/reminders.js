@@ -1,9 +1,27 @@
 // backend/routes/reminders.js
 import express from "express";
 import webpush from "web-push";
-import { supabase } from "../server.js";
+import { supabase } from "../supabaseClient.js";
 
 const router = express.Router();
+
+function requireAdminApiKey(req, res, next) {
+  const configuredKey = process.env.ADMIN_API_KEY;
+
+  if (!configuredKey) {
+    return res.status(503).json({
+      error: "Admin API is not configured.",
+    });
+  }
+
+  if (req.get("x-admin-api-key") !== configuredKey) {
+    return res.status(401).json({
+      error: "Admin API key is required.",
+    });
+  }
+
+  return next();
+}
 
 // ============================================
 // POST /api/send-reminder
@@ -27,7 +45,7 @@ const router = express.Router();
  *   "total": 5
  * }
  */
-router.post("/send-reminder", async (req, res) => {
+router.post("/send-reminder", requireAdminApiKey, async (req, res) => {
   try {
     const { participantIds = [], title, body } = req.body;
 
@@ -141,7 +159,7 @@ router.post("/send-reminder", async (req, res) => {
 // GET /api/subscriptions
 // Check how many users are subscribed
 // ============================================
-router.get("/subscriptions", async (req, res) => {
+router.get("/subscriptions", requireAdminApiKey, async (req, res) => {
   try {
     const { count, error } = await supabase
       .from("push_subscriptions")
@@ -162,7 +180,7 @@ router.get("/subscriptions", async (req, res) => {
 // GET /api/notification-logs
 // View recent notification sends
 // ============================================
-router.get("/notification-logs", async (req, res) => {
+router.get("/notification-logs", requireAdminApiKey, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("notification_logs")

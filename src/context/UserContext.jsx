@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useState } from "react";
 import { DEFAULT_USER_ROLE, normalizeUserRole } from "../utils/roles";
 
@@ -17,22 +18,20 @@ function normalizeUser(user) {
 }
 
 export function UserProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  // Load user on app start
-  useEffect(() => {
+  const [user, setUser] = useState(() => {
     const savedUser = localStorage.getItem("burushaski_user");
     if (savedUser) {
       try {
-        setUser(normalizeUser(JSON.parse(savedUser)));
+        return normalizeUser(JSON.parse(savedUser));
       } catch (err) {
         console.error("Failed to parse saved user:", err);
         localStorage.removeItem("burushaski_user");
       }
     }
-    setLoading(false);
-  }, []);
+
+    return null;
+  });
+  const [loading] = useState(false);
 
   // Save user whenever it changes
   useEffect(() => {

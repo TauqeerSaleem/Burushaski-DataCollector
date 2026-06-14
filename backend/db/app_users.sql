@@ -8,16 +8,39 @@ create table if not exists public.app_users (
   role text not null default 'volunteer'
     check (role in ('volunteer', 'content_contributor', 'researcher', 'admin')),
   display_name text,
+  contact_preference text,
+  mobile_number text,
   dialect text,
+  dialects text[] not null default '{}',
+  other_dialect text,
   gender text,
   age text,
+  other_language_count text,
   other_languages text[] not null default '{}',
+  comfort_language text,
   place_of_birth text,
   places_lived text[] not null default '{}',
   consent_accepted boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.app_users add column if not exists contact_preference text;
+alter table public.app_users add column if not exists mobile_number text;
+alter table public.app_users add column if not exists display_name text;
+alter table public.app_users add column if not exists dialect text;
+alter table public.app_users add column if not exists dialects text[] not null default '{}';
+alter table public.app_users add column if not exists other_dialect text;
+alter table public.app_users add column if not exists gender text;
+alter table public.app_users add column if not exists age text;
+alter table public.app_users add column if not exists other_language_count text;
+alter table public.app_users add column if not exists other_languages text[] not null default '{}';
+alter table public.app_users add column if not exists comfort_language text;
+alter table public.app_users add column if not exists place_of_birth text;
+alter table public.app_users add column if not exists places_lived text[] not null default '{}';
+alter table public.app_users add column if not exists consent_accepted boolean not null default false;
+alter table public.app_users add column if not exists created_at timestamptz not null default now();
+alter table public.app_users add column if not exists updated_at timestamptz not null default now();
 
 create index if not exists app_users_role_idx on public.app_users (role);
 create index if not exists app_users_dialect_idx on public.app_users (dialect);

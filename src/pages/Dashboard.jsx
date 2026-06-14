@@ -12,12 +12,6 @@ export default function Dashboard() {
   const data = useSentences();
   const { user, setUser } = useUser();
   const navigate = useNavigate();
-
-  // 🔐 AUTH GUARD — must be first
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
   const [completedMap, setCompletedMap] = useState({});
 
   // 🔄 Load progress from IndexedDB
@@ -40,15 +34,13 @@ export default function Dashboard() {
     loadProgress();
   }, [data, user]);
 
-  if (!data) return <p className="p-4">Loading…</p>;
-
   // 🔔 REMINDER LOGIC
   let reminderMessage = null;
 
-  const incompleteModules = data.modules.filter((module) => {
+  const incompleteModules = data?.modules.filter((module) => {
     const completed = completedMap[module.moduleId] || 0;
     return completed < module.sentences.length;
-  });
+  }) || [];
 
   if (incompleteModules.length > 0) {
     const mod = incompleteModules[0];
@@ -81,6 +73,13 @@ export default function Dashboard() {
       });
     }
   }, [reminderMessage]);
+
+  // 🔐 AUTH GUARD
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!data) return <p className="p-4">Loading…</p>;
 
   const handleLogout = () => {
     setUser(null);

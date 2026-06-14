@@ -14,11 +14,6 @@ export default function ModuleView() {
   const { user, loading } = useUser();
   const [completed, setCompleted] = useState([]);
 
-  // Route guard
-  if (!moduleId) {
-    return <div className="p-6 text-white">Invalid module URL</div>;
-  }
-
   // Fetch completed recordings from IndexedDB
   useEffect(() => {
     if (!user?.participantId) return;
@@ -31,6 +26,11 @@ export default function ModuleView() {
         console.error("Error loading completed recordings:", err);
       });
   }, [moduleId, user?.participantId]);
+
+  // Route guard
+  if (!moduleId) {
+    return <div className="p-6 text-white">Invalid module URL</div>;
+  }
 
   if (loading || !data) {
     return <div className="p-6 text-white">Loading...</div>;

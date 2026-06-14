@@ -13,8 +13,6 @@ export default function Stats() {
   const [uploadedMap, setUploadedMap] = useState({});
   const [loaded, setLoaded] = useState(false);
 
-  if (!user) return <Navigate to="/login" replace />;
-
   useEffect(() => {
     if (!data || !user) return;
 
@@ -39,6 +37,8 @@ export default function Stats() {
 
     load();
   }, [data, user]);
+
+  if (!user) return <Navigate to="/login" replace />;
 
   if (!data || !loaded) {
     return (

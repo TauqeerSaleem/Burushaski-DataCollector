@@ -1,11 +1,12 @@
 import { useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 export default function Instructions() {
   const navigate = useNavigate();
   const { user, loading, setUser } = useUser();
-  const [ready, setReady] = useState(false);
+  const hasSeenInstructions = localStorage.getItem("hasSeenInstructions");
+  const ready = !loading && user && hasSeenInstructions !== "true";
 
   useEffect(() => {
     if (loading) return;
@@ -15,14 +16,10 @@ export default function Instructions() {
       return;
     }
 
-    const hasSeenInstructions = localStorage.getItem("hasSeenInstructions");
     if (hasSeenInstructions === "true") {
       navigate("/dashboard", { replace: true });
-      return;
     }
-
-    setReady(true);
-  }, [loading, user, navigate]);
+  }, [hasSeenInstructions, loading, user, navigate]);
 
   const handleStart = () => {
     localStorage.setItem("hasSeenInstructions", "true");

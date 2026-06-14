@@ -27,23 +27,41 @@ export function validateUsername(username) {
 }
 
 export function parseCommaList(value) {
+  if (!value) return [];
+
   return value
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
 }
 
+function formatPlace(place) {
+  if (!place) return "";
+  if (typeof place === "string") return place;
+
+  const city = place.city?.trim();
+  const country = place.country?.trim();
+
+  return [city, country].filter(Boolean).join(", ");
+}
+
 export function draftToSignupPayload(draft) {
   return {
     username: draft.username,
-    name: draft.name,
-    age: draft.age,
+    name: draft.name || draft.username,
+    age: draft.ageGroup,
     gender: draft.gender,
     dialect: draft.dialect,
-    otherLanguages: parseCommaList(draft.otherLanguages),
-    placeOfBirth: draft.placeOfBirth,
-    placesLived: parseCommaList(draft.placesLived),
-    role: "volunteer",
+    dialects: draft.dialects || [],
+    otherDialect: draft.otherDialect,
+    otherLanguages: parseCommaList(draft.otherLangs),
+    otherLanguageCount: draft.numOtherLangs,
+    comfortLanguage: draft.comfortLang,
+    contactPreference: draft.contactPref,
+    mobileNumber: draft.mobile,
+    placeOfBirth: formatPlace(draft.birthplace),
+    placesLived: (draft.placesLived || []).map(formatPlace).filter(Boolean),
+    role: draft.role,
     consentAccepted: true,
   };
 }
