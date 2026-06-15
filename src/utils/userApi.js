@@ -4,7 +4,31 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   (import.meta.env.DEV ? "http://localhost:3001" : "");
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isNetworkError(error) {
+  return error instanceof TypeError || error?.name === "AbortError";
+}
+
 async function request(path, options = {}) {
+  const { retries = 0, ...fetchOptions } = options;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await requestOnce(path, fetchOptions);
+    } catch (error) {
+      if (attempt >= retries || !isNetworkError(error)) {
+        throw error;
+      }
+
+      await delay(400 * (attempt + 1));
+    }
+  }
+}
+
+async function requestOnce(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       "Content-Type": "application/json",
@@ -33,6 +57,7 @@ export async function signupUser(profile) {
   const data = await request("/api/users/signup", {
     method: "POST",
     body: JSON.stringify(profile),
+    retries: 1,
   });
 
   return normalizeApiUser(data.user);
@@ -42,6 +67,7 @@ export async function loginUser(username) {
   const data = await request("/api/users/login", {
     method: "POST",
     body: JSON.stringify({ username }),
+    retries: 2,
   });
 
   return normalizeApiUser(data.user);

@@ -12,14 +12,9 @@ import ModuleView from "./pages/ModuleView";
 import Stats from "./pages/Stats";
 import VolunteerRoute from "./pages/VolunteerRoute";
 import { syncPendingRecordings } from "./utils/syncRecordings";
-import { registerSW } from 'virtual:pwa-register';
 
 export default function App() {
   const { loading } = useUser();
-  useEffect(() => {
-    registerSW();
-  }, []);
-
   const { user } = useUser();
 
   useEffect(() => {

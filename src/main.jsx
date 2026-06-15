@@ -4,7 +4,13 @@ import App from "./App";
 import "./index.css";
 import { UserProvider } from "./context/UserContext";
 import { registerSW } from "virtual:pwa-register";
-registerSW();
+
+const updateSW = registerSW({
+  immediate: true,
+  onNeedRefresh() {
+    updateSW(true);
+  },
+});
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
