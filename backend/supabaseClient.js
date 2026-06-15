@@ -21,10 +21,9 @@ const supabaseKey =
   envValue("SUPABASE_KEY") ||
   envValue("VITE_SUPABASE_ANON_KEY");
 
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error("Missing Supabase backend environment variables.");
-}
-
 export const hasServiceRoleKey = Boolean(serviceRoleKey);
+export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export const supabase = hasSupabaseConfig
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import express from "express";
-import { hasServiceRoleKey, supabase } from "../supabaseClient.js";
+import { hasServiceRoleKey, hasSupabaseConfig, supabase } from "../supabaseClient.js";
 import { normalizeUserRole } from "../utils/roles.js";
 
 const router = express.Router();
@@ -9,6 +9,13 @@ const USERNAME_PATTERN = /^[a-zA-Z0-9._-]{3,32}$/;
 const LEGACY_PARTICIPANT_ID_PATTERN = /^P-\d+$/i;
 
 function requireServiceRole(res) {
+  if (!hasSupabaseConfig || !supabase) {
+    res.status(500).json({
+      error: "User management API requires Supabase backend environment variables.",
+    });
+    return false;
+  }
+
   if (hasServiceRoleKey) return true;
 
   res.status(500).json({

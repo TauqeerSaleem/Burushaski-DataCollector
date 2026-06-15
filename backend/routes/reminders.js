@@ -1,7 +1,7 @@
 // backend/routes/reminders.js
 import express from "express";
 import webpush from "web-push";
-import { supabase } from "../supabaseClient.js";
+import { hasSupabaseConfig, supabase } from "../supabaseClient.js";
 
 const router = express.Router();
 
@@ -17,6 +17,16 @@ function requireAdminApiKey(req, res, next) {
   if (req.get("x-admin-api-key") !== configuredKey) {
     return res.status(401).json({
       error: "Admin API key is required.",
+    });
+  }
+
+  return next();
+}
+
+function requireSupabase(req, res, next) {
+  if (!hasSupabaseConfig || !supabase) {
+    return res.status(500).json({
+      error: "Admin API requires Supabase backend environment variables.",
     });
   }
 
@@ -45,7 +55,7 @@ function requireAdminApiKey(req, res, next) {
  *   "total": 5
  * }
  */
-router.post("/send-reminder", requireAdminApiKey, async (req, res) => {
+router.post("/send-reminder", requireAdminApiKey, requireSupabase, async (req, res) => {
   try {
     const { participantIds = [], title, body } = req.body;
 
@@ -159,7 +169,7 @@ router.post("/send-reminder", requireAdminApiKey, async (req, res) => {
 // GET /api/subscriptions
 // Check how many users are subscribed
 // ============================================
-router.get("/subscriptions", requireAdminApiKey, async (req, res) => {
+router.get("/subscriptions", requireAdminApiKey, requireSupabase, async (req, res) => {
   try {
     const { count, error } = await supabase
       .from("push_subscriptions")
@@ -180,7 +190,7 @@ router.get("/subscriptions", requireAdminApiKey, async (req, res) => {
 // GET /api/notification-logs
 // View recent notification sends
 // ============================================
-router.get("/notification-logs", requireAdminApiKey, async (req, res) => {
+router.get("/notification-logs", requireAdminApiKey, requireSupabase, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("notification_logs")
