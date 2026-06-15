@@ -67,6 +67,10 @@ function isUniqueViolation(error) {
 }
 
 function errorResponse(message, error) {
+  if (process.env.NODE_ENV === "production") {
+    return { error: message };
+  }
+
   return {
     error: message,
     details: error?.message || "Unknown backend error.",
