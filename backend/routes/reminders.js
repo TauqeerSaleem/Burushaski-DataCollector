@@ -220,6 +220,9 @@ router.get("/diagnostics/supabase", requireAdminApiKey, async (req, res) => {
   const result = {
     hasSupabaseConfig,
     hasServiceRoleKey,
+    hasMasterAdminUsername: Boolean(process.env.MASTER_ADMIN_USERNAME),
+    hasMasterAdminPassword: Boolean(process.env.MASTER_ADMIN_PASSWORD),
+    hasAdminSessionSecret: Boolean(process.env.ADMIN_SESSION_SECRET || process.env.ADMIN_API_KEY),
     supabaseHost,
     restReachable: false,
     status: null,

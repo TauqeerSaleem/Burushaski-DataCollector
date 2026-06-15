@@ -204,6 +204,10 @@ router.post("/admin/login", async (req, res) => {
       return res.status(429).json({ error: "Too many login attempts. Please try again later." });
     }
 
+    if (isMasterAdminUsername(username) && !hasMasterAdminPassword()) {
+      return res.status(503).json({ error: "Master admin is not configured on this deployment." });
+    }
+
     if (verifyMasterAdmin(username, password)) {
       const admin = {
         id: "master",
