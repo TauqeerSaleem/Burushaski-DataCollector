@@ -10,14 +10,8 @@ import { sendReminderNotification } from "../utils/notify";
 
 export default function Dashboard() {
   const data = useSentences();
-  const { user } = useUser();
+  const { user, setUser } = useUser();
   const navigate = useNavigate();
-
-  // 🔐 AUTH GUARD — must be first
-  if (!user) {
-    return <Navigate to="/" replace />;
-  }
-
   const [completedMap, setCompletedMap] = useState({});
 
   // 🔄 Load progress from IndexedDB
@@ -40,15 +34,13 @@ export default function Dashboard() {
     loadProgress();
   }, [data, user]);
 
-  if (!data) return <p className="p-4">Loading…</p>;
-
   // 🔔 REMINDER LOGIC
   let reminderMessage = null;
 
-  const incompleteModules = data.modules.filter((module) => {
+  const incompleteModules = data?.modules.filter((module) => {
     const completed = completedMap[module.moduleId] || 0;
     return completed < module.sentences.length;
-  });
+  }) || [];
 
   if (incompleteModules.length > 0) {
     const mod = incompleteModules[0];
@@ -82,6 +74,19 @@ export default function Dashboard() {
     }
   }, [reminderMessage]);
 
+  // 🔐 AUTH GUARD
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!data) return <p className="p-4">Loading…</p>;
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem("hasSeenInstructions");
+    navigate("/", { replace: true });
+  };
+
   // ✅ JSX MUST BE RETURNED
   return (
     <div className="safe-top p-4 space-y-4">
@@ -108,6 +113,13 @@ export default function Dashboard() {
             className="text-sm text-white font-bold bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"
           >
             📖 View Instructions
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-sm text-white font-bold bg-red-600 hover:bg-red-700 px-3 py-1 rounded"
+          >
+            Logout
           </button>
         </div>
       </div>

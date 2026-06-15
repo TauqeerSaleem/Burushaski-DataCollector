@@ -1,32 +1,25 @@
 import { useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 export default function Instructions() {
   const navigate = useNavigate();
-  const { user, loading } = useUser();
-  const [ready, setReady] = useState(false);
+  const { user, loading, setUser } = useUser();
+  const hasSeenInstructions = localStorage.getItem("hasSeenInstructions");
+  const ready = !loading && user && hasSeenInstructions !== "true";
 
   useEffect(() => {
-    // Wait until user context has finished loading
     if (loading) return;
 
-    // No user at all → go to onboarding
     if (!user) {
-      navigate("/", { replace: true });
+      navigate("/login", { replace: true });
       return;
     }
 
-    // User has already seen instructions → skip to dashboard
-    const hasSeenInstructions = localStorage.getItem("hasSeenInstructions");
     if (hasSeenInstructions === "true") {
       navigate("/dashboard", { replace: true });
-      return;
     }
-
-    // All good — show the instructions
-    setReady(true);
-  }, [loading, user, navigate]);
+  }, [hasSeenInstructions, loading, user, navigate]);
 
   const handleStart = () => {
     localStorage.setItem("hasSeenInstructions", "true");
@@ -38,7 +31,11 @@ export default function Instructions() {
     navigate("/dashboard", { replace: true });
   };
 
-  // Show nothing while we're figuring out what to do
+  const handleLogout = () => {
+    setUser(null);
+    navigate("/", { replace: true });
+  };
+
   if (!ready) return null;
 
   return (
@@ -47,7 +44,13 @@ export default function Instructions() {
 
         {/* Header Section */}
         <div className="mb-8">
-          <div className="flex justify-end mb-2">
+          <div className="flex justify-between mb-2">
+            <button
+              onClick={handleLogout}
+              className="text-gray-400 hover:text-yellow-400 text-sm underline transition-colors"
+            >
+              ← Logout
+            </button>
             <button
               onClick={handleSkip}
               className="text-gray-400 hover:text-yellow-400 text-sm underline transition-colors"
@@ -97,8 +100,6 @@ export default function Instructions() {
               ⚠️ Read ONLY the Burushaski text (bold), NOT the English!
             </p>
           </div>
-
-
 
           {/* Step 3 */}
           <div className="space-y-2">

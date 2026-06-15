@@ -44,7 +44,7 @@ export default function FeedbackModal({
 
       mediaRecorder.start();
       setIsRecording(true);
-    } catch (err) {
+    } catch {
       setError("Microphone access denied. Please allow microphone and try again.");
     }
   };

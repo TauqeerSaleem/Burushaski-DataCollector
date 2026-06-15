@@ -1,24 +1,37 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useState } from "react";
+import { DEFAULT_USER_ROLE, normalizeUserRole } from "../utils/roles";
 
 const UserContext = createContext(null);
 
-export function UserProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+function normalizeUser(user) {
+  if (!user) return null;
 
-  // Load user on app start
-  useEffect(() => {
+  const userId = user.participantId || user.userId || user.id || user.username;
+
+  return {
+    ...user,
+    participantId: user.participantId || userId,
+    username: user.username || user.participantId || "",
+    role: normalizeUserRole(user.role || DEFAULT_USER_ROLE),
+  };
+}
+
+export function UserProvider({ children }) {
+  const [user, setUser] = useState(() => {
     const savedUser = localStorage.getItem("burushaski_user");
     if (savedUser) {
       try {
-        setUser(JSON.parse(savedUser));
+        return normalizeUser(JSON.parse(savedUser));
       } catch (err) {
         console.error("Failed to parse saved user:", err);
         localStorage.removeItem("burushaski_user");
       }
     }
-    setLoading(false);
-  }, []);
+
+    return null;
+  });
+  const [loading] = useState(false);
 
   // Save user whenever it changes
   useEffect(() => {
@@ -29,8 +42,12 @@ export function UserProvider({ children }) {
     }
   }, [user]);
 
+  const updateUser = (nextUser) => {
+    setUser(normalizeUser(nextUser));
+  };
+
   return (
-    <UserContext.Provider value={{ user, setUser, loading }}>
+    <UserContext.Provider value={{ user, setUser: updateUser, loading }}>
       {children}
     </UserContext.Provider>
   );

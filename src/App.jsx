@@ -1,46 +1,44 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useUser } from "./context/UserContext";
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 
-import Onboarding from "./pages/Onboarding";
+import AuthRedirect from "./pages/AuthRedirect";
+import Login from "./pages/Login";
+import Signup from "./pages/Signup";
+import Consent from "./pages/Consent";
 import Instructions from "./pages/Instructions";
-import Dashboard from "./pages/Dashboard";
+import RoleDashboard from "./pages/RoleDashboard";
 import ModuleView from "./pages/ModuleView";
 import Stats from "./pages/Stats";
+import VolunteerRoute from "./pages/VolunteerRoute";
 import { syncPendingRecordings } from "./utils/syncRecordings";
 import { registerSW } from 'virtual:pwa-register';
-
-// Register the service worker when the app loads
 
 export default function App() {
   const { loading } = useUser();
   useEffect(() => {
-  registerSW();  // Automatically registers the service worker
-}, []);
+    registerSW();
+  }, []);
 
-const { user } = useUser();
+  const { user } = useUser();
 
-useEffect(() => {
-  const handleOnline = () => {
-    console.log("🌐 Back online");
-    syncPendingRecordings(user);
-  };
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log("🌐 Back online");
+      syncPendingRecordings(user);
+    };
 
-  window.addEventListener("online", handleOnline);
+    window.addEventListener("online", handleOnline);
 
-  // Run once on app start
-  if (user) {
-    syncPendingRecordings(user);
-  }
+    if (user) {
+      syncPendingRecordings(user);
+    }
 
-  return () => {
-    window.removeEventListener("online", handleOnline);
-  };
-}, [user]);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [user]);
 
-
-
-  // Wait until user is loaded from localStorage
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-blue-900 to-blue-500 flex items-center justify-center text-white">
@@ -52,11 +50,14 @@ useEffect(() => {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Onboarding />} />
+        <Route path="/" element={<AuthRedirect />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/consent" element={<Consent />} />
         <Route path="/instructions" element={<Instructions />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/module/:moduleId" element={<ModuleView />} />
-        <Route path="/stats" element={<Stats />} />
+        <Route path="/dashboard" element={<RoleDashboard />} />
+        <Route path="/module/:moduleId" element={<VolunteerRoute><ModuleView /></VolunteerRoute>} />
+        <Route path="/stats" element={<VolunteerRoute><Stats /></VolunteerRoute>} />
       </Routes>
     </BrowserRouter>
   );

@@ -1,6 +1,5 @@
 import { db } from "../db/indexdb";
 import { uploadFeedback } from "./uploadFeedback";
-import { supabase } from "../supabase";
 
 export async function syncPendingFeedback(user) {
   // Fetch all feedback that hasn't been synced yet
