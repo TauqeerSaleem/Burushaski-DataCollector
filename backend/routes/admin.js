@@ -48,6 +48,11 @@ function cleanArray(value) {
   return items.map(cleanText).filter(Boolean);
 }
 
+function cleanNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 function requireAdmin(req, res, next) {
   try {
     const admin = verifyAdminToken(getBearerToken(req));
@@ -178,6 +183,121 @@ function userUpdatePayload(body) {
   };
 }
 
+function promptToClient(row) {
+  return {
+    id: row.id,
+    promptId: row.prompt_id,
+    moduleId: row.module_id,
+    moduleTitle: row.module_title,
+    promptType: row.prompt_type,
+    dialect: row.dialect || "",
+    english: row.english || "",
+    transliteration: row.transliteration || "",
+    mediaUrl: row.media_url || "",
+    difficulty: row.difficulty || "short",
+    curriculumStage: row.curriculum_stage || "",
+    grammaticalCategory: row.grammatical_category || "",
+    weight: row.weight || 0,
+    active: row.active !== false,
+    sortOrder: row.sort_order || 0,
+    createdBy: row.created_by || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function promptPayload(body, admin) {
+  const english = cleanText(body.english);
+
+  return {
+    ...(body.promptId !== undefined ? { prompt_id: cleanText(body.promptId) } : {}),
+    ...(body.moduleId !== undefined ? { module_id: cleanText(body.moduleId) || "admin-prompts" } : {}),
+    ...(body.moduleTitle !== undefined ? { module_title: cleanText(body.moduleTitle) || "Admin Prompts" } : {}),
+    ...(body.promptType !== undefined ? { prompt_type: cleanText(body.promptType) || "translation" } : {}),
+    ...(body.dialect !== undefined ? { dialect: cleanText(body.dialect) } : {}),
+    ...(body.english !== undefined ? { english } : {}),
+    ...(body.transliteration !== undefined ? { transliteration: cleanText(body.transliteration) } : {}),
+    ...(body.mediaUrl !== undefined ? { media_url: cleanText(body.mediaUrl) } : {}),
+    ...(body.difficulty !== undefined ? { difficulty: cleanText(body.difficulty) || "short" } : {}),
+    ...(body.curriculumStage !== undefined ? { curriculum_stage: cleanText(body.curriculumStage) } : {}),
+    ...(body.grammaticalCategory !== undefined ? { grammatical_category: cleanText(body.grammaticalCategory) } : {}),
+    ...(body.weight !== undefined ? { weight: cleanNumber(body.weight, 1) } : {}),
+    ...(body.active !== undefined ? { active: Boolean(body.active) } : {}),
+    ...(body.sortOrder !== undefined ? { sort_order: cleanNumber(body.sortOrder, 0) } : {}),
+    ...(admin ? { created_by: admin.username } : {}),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function taskToClient(row) {
+  return {
+    id: row.id,
+    title: row.title || "",
+    taskType: row.task_type || "transcription",
+    assignedTo: row.assigned_to || "",
+    sourceType: row.source_type || "audio",
+    sourceRef: row.source_ref || "",
+    sourceText: row.source_text || "",
+    instructions: row.instructions || "",
+    status: row.status || "todo",
+    priority: row.priority || "normal",
+    dueDate: row.due_date || "",
+    transcript: row.transcript || "",
+    translation: row.translation || "",
+    notes: row.notes || "",
+    createdBy: row.created_by || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function taskPayload(body, admin) {
+  return {
+    ...(body.title !== undefined ? { title: cleanText(body.title) } : {}),
+    ...(body.taskType !== undefined ? { task_type: cleanText(body.taskType) || "transcription" } : {}),
+    ...(body.assignedTo !== undefined ? { assigned_to: cleanText(body.assignedTo) } : {}),
+    ...(body.sourceType !== undefined ? { source_type: cleanText(body.sourceType) || "audio" } : {}),
+    ...(body.sourceRef !== undefined ? { source_ref: cleanText(body.sourceRef) } : {}),
+    ...(body.sourceText !== undefined ? { source_text: cleanText(body.sourceText) } : {}),
+    ...(body.instructions !== undefined ? { instructions: cleanText(body.instructions) } : {}),
+    ...(body.status !== undefined ? { status: cleanText(body.status) || "todo" } : {}),
+    ...(body.priority !== undefined ? { priority: cleanText(body.priority) || "normal" } : {}),
+    ...(body.dueDate !== undefined ? { due_date: cleanText(body.dueDate) } : {}),
+    ...(body.transcript !== undefined ? { transcript: cleanText(body.transcript) } : {}),
+    ...(body.translation !== undefined ? { translation: cleanText(body.translation) } : {}),
+    ...(body.notes !== undefined ? { notes: cleanText(body.notes) } : {}),
+    ...(admin ? { created_by: admin.username } : {}),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function promptsToModules(rows) {
+  const modules = new Map();
+
+  rows.forEach((row) => {
+    const moduleId = row.module_id || "admin-prompts";
+    if (!modules.has(moduleId)) {
+      modules.set(moduleId, {
+        moduleId,
+        title: row.module_title || "Admin Prompts",
+        sentences: [],
+      });
+    }
+
+    modules.get(moduleId).sentences.push({
+      sentenceId: row.prompt_id,
+      english: row.english,
+      transliteration: row.transliteration || row.english,
+      promptType: row.prompt_type,
+      mediaUrl: row.media_url || "",
+      grammaticalCategory: row.grammatical_category || "",
+      weight: row.weight || 1,
+    });
+  });
+
+  return { modules: Array.from(modules.values()) };
+}
+
 async function writeActivity(admin, action, targetType, targetId, details = {}) {
   await supabase.from("admin_activity_logs").insert({
     admin_username: admin.username,
@@ -188,6 +308,33 @@ async function writeActivity(admin, action, targetType, targetId, details = {}) 
     details,
   });
 }
+
+router.get("/prompts", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const dialect = cleanText(req.query.dialect);
+    let query = supabase
+      .from("prompt_bank")
+      .select("*")
+      .eq("active", true)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (dialect) {
+      query = query.or(`dialect.is.null,dialect.eq.${dialect}`);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    res.json(promptsToModules(data || []));
+  } catch (error) {
+    console.error("Public prompts failed:", error.message);
+    res.status(500).json({ error: "Unable to load prompts." });
+  }
+});
 
 router.post("/admin/login", async (req, res) => {
   try {
@@ -411,6 +558,167 @@ router.get("/admin/data", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Admin data failed:", error.message);
     res.status(500).json({ error: "Unable to load data." });
+  }
+});
+
+router.get("/admin/prompts", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const { data, error } = await supabase
+      .from("prompt_bank")
+      .select("*")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ prompts: (data || []).map(promptToClient) });
+  } catch (error) {
+    console.error("Admin prompts failed:", error.message);
+    res.status(500).json({ error: "Unable to load prompts." });
+  }
+});
+
+router.post("/admin/prompts", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const payload = promptPayload(req.body, req.admin);
+
+    if (!payload.prompt_id || !payload.english) {
+      return res.status(400).json({ error: "Prompt ID and English prompt are required." });
+    }
+
+    const { data, error } = await supabase
+      .from("prompt_bank")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) throw error;
+
+    await writeActivity(req.admin, "create_prompt", "prompt", data.id, { promptId: data.prompt_id });
+    res.status(201).json({ prompt: promptToClient(data) });
+  } catch (error) {
+    console.error("Admin prompt create failed:", error.message);
+    res.status(500).json({ error: "Unable to create prompt." });
+  }
+});
+
+router.patch("/admin/prompts/:id", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const payload = promptPayload(req.body);
+    delete payload.created_by;
+
+    const { data, error } = await supabase
+      .from("prompt_bank")
+      .update(payload)
+      .eq("id", req.params.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "Prompt not found." });
+
+    await writeActivity(req.admin, "update_prompt", "prompt", req.params.id);
+    res.json({ prompt: promptToClient(data) });
+  } catch (error) {
+    console.error("Admin prompt update failed:", error.message);
+    res.status(500).json({ error: "Unable to update prompt." });
+  }
+});
+
+router.delete("/admin/prompts/:id", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const { data, error } = await supabase
+      .from("prompt_bank")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", req.params.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "Prompt not found." });
+
+    await writeActivity(req.admin, "deactivate_prompt", "prompt", req.params.id);
+    res.json({ prompt: promptToClient(data) });
+  } catch (error) {
+    console.error("Admin prompt deactivate failed:", error.message);
+    res.status(500).json({ error: "Unable to deactivate prompt." });
+  }
+});
+
+router.get("/admin/research-tasks", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const { data, error } = await supabase
+      .from("research_tasks")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ tasks: (data || []).map(taskToClient) });
+  } catch (error) {
+    console.error("Admin research tasks failed:", error.message);
+    res.status(500).json({ error: "Unable to load research tasks." });
+  }
+});
+
+router.post("/admin/research-tasks", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const payload = taskPayload(req.body, req.admin);
+
+    if (!payload.title) {
+      return res.status(400).json({ error: "Task title is required." });
+    }
+
+    const { data, error } = await supabase
+      .from("research_tasks")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) throw error;
+
+    await writeActivity(req.admin, "create_research_task", "research_task", data.id);
+    res.status(201).json({ task: taskToClient(data) });
+  } catch (error) {
+    console.error("Admin research task create failed:", error.message);
+    res.status(500).json({ error: "Unable to create research task." });
+  }
+});
+
+router.patch("/admin/research-tasks/:id", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const payload = taskPayload(req.body);
+    delete payload.created_by;
+
+    const { data, error } = await supabase
+      .from("research_tasks")
+      .update(payload)
+      .eq("id", req.params.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "Research task not found." });
+
+    await writeActivity(req.admin, "update_research_task", "research_task", req.params.id);
+    res.json({ task: taskToClient(data) });
+  } catch (error) {
+    console.error("Admin research task update failed:", error.message);
+    res.status(500).json({ error: "Unable to update research task." });
   }
 });
 

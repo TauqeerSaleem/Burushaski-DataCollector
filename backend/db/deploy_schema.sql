@@ -94,6 +94,59 @@ create table if not exists public.admin_activity_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.prompt_bank (
+  id uuid primary key default gen_random_uuid(),
+  prompt_id text not null,
+  module_id text not null default 'admin-prompts',
+  module_title text not null default 'Admin Prompts',
+  prompt_type text not null default 'translation'
+    check (prompt_type in ('translation', 'elicitation', 'picture_description', 'validation')),
+  dialect text,
+  english text not null,
+  transliteration text,
+  media_url text,
+  difficulty text not null default 'short'
+    check (difficulty in ('short', 'medium', 'long')),
+  curriculum_stage text,
+  grammatical_category text,
+  weight integer not null default 1 check (weight >= 0),
+  active boolean not null default true,
+  sort_order integer not null default 0,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+do $$
+begin
+  alter table public.prompt_bank drop constraint if exists prompt_bank_prompt_id_key;
+end;
+$$;
+
+create table if not exists public.research_tasks (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  task_type text not null default 'transcription'
+    check (task_type in ('transcription', 'translation', 'validation', 'metadata_review')),
+  assigned_to uuid references public.app_users(id) on delete set null,
+  source_type text not null default 'audio'
+    check (source_type in ('audio', 'text', 'content_url', 'recording', 'feedback')),
+  source_ref text,
+  source_text text,
+  instructions text,
+  status text not null default 'todo'
+    check (status in ('todo', 'in_progress', 'review', 'done', 'blocked')),
+  priority text not null default 'normal'
+    check (priority in ('low', 'normal', 'high', 'urgent')),
+  due_date date,
+  transcript text,
+  translation text,
+  notes text,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.app_users
 add column if not exists active boolean not null default true;
 
@@ -106,6 +159,13 @@ create index if not exists feedback_participant_idx on public.feedback (particip
 create index if not exists admin_accounts_active_idx on public.admin_accounts (active);
 create index if not exists admin_activity_logs_admin_idx on public.admin_activity_logs (admin_username);
 create index if not exists admin_activity_logs_created_idx on public.admin_activity_logs (created_at);
+create index if not exists prompt_bank_active_idx on public.prompt_bank (active);
+create index if not exists prompt_bank_dialect_idx on public.prompt_bank (dialect);
+create index if not exists prompt_bank_module_idx on public.prompt_bank (module_id);
+create unique index if not exists prompt_bank_prompt_dialect_uidx
+on public.prompt_bank (prompt_id, dialect);
+create index if not exists research_tasks_status_idx on public.research_tasks (status);
+create index if not exists research_tasks_assigned_idx on public.research_tasks (assigned_to);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -162,6 +222,8 @@ alter table public.push_subscriptions enable row level security;
 alter table public.notification_logs enable row level security;
 alter table public.admin_accounts enable row level security;
 alter table public.admin_activity_logs enable row level security;
+alter table public.prompt_bank enable row level security;
+alter table public.research_tasks enable row level security;
 
 do $$
 begin

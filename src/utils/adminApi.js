@@ -98,6 +98,60 @@ export async function fetchAdminData() {
   return request("/api/admin/data");
 }
 
+export async function fetchAdminPrompts() {
+  const data = await request("/api/admin/prompts");
+  return data.prompts || [];
+}
+
+export async function createPrompt(prompt) {
+  const data = await request("/api/admin/prompts", {
+    method: "POST",
+    body: JSON.stringify(prompt),
+  });
+
+  return data.prompt;
+}
+
+export async function updatePrompt(id, prompt) {
+  const data = await request(`/api/admin/prompts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(prompt),
+  });
+
+  return data.prompt;
+}
+
+export async function deactivatePrompt(id) {
+  const data = await request(`/api/admin/prompts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+  return data?.prompt || null;
+}
+
+export async function fetchResearchTasks() {
+  const data = await request("/api/admin/research-tasks");
+  return data.tasks || [];
+}
+
+export async function createResearchTask(task) {
+  const data = await request("/api/admin/research-tasks", {
+    method: "POST",
+    body: JSON.stringify(task),
+  });
+
+  return data.task;
+}
+
+export async function updateResearchTask(id, task) {
+  const data = await request(`/api/admin/research-tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(task),
+  });
+
+  return data.task;
+}
+
 export async function fetchAdmins() {
   const data = await request("/api/admin/admins");
   return data.admins || [];
