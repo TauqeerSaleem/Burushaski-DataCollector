@@ -1,7 +1,13 @@
 // backend/routes/reminders.js
 import express from "express";
 import webpush from "web-push";
-import { hasSupabaseConfig, supabase } from "../supabaseClient.js";
+import {
+  hasServiceRoleKey,
+  hasSupabaseConfig,
+  supabase,
+  supabaseHost,
+  supabaseRestUrl,
+} from "../supabaseClient.js";
 
 const router = express.Router();
 
@@ -207,6 +213,39 @@ router.get("/notification-logs", requireAdminApiKey, requireSupabase, async (req
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/diagnostics/supabase", requireAdminApiKey, async (req, res) => {
+  const result = {
+    hasSupabaseConfig,
+    hasServiceRoleKey,
+    supabaseHost,
+    restReachable: false,
+    status: null,
+    error: null,
+    cause: null,
+  };
+
+  if (!supabaseRestUrl) {
+    result.error = "SUPABASE_URL is missing or invalid.";
+    return res.status(500).json(result);
+  }
+
+  try {
+    const response = await fetch(supabaseRestUrl, {
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || "",
+      },
+    });
+
+    result.restReachable = true;
+    result.status = response.status;
+    return res.json(result);
+  } catch (error) {
+    result.error = error.message;
+    result.cause = error.cause?.message || null;
+    return res.status(500).json(result);
   }
 });
 

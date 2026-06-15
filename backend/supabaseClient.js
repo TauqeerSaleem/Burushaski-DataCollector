@@ -24,6 +24,23 @@ const supabaseKey =
 export const hasServiceRoleKey = Boolean(serviceRoleKey);
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 
+function safeUrlPart(url, part) {
+  if (!url) return null;
+
+  try {
+    const parsed = new URL(url);
+    return part === "host" ? parsed.host : parsed.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+export const supabaseHost = safeUrlPart(supabaseUrl, "host");
+const normalizedSupabaseUrl = safeUrlPart(supabaseUrl, "url");
+export const supabaseRestUrl = normalizedSupabaseUrl
+  ? `${normalizedSupabaseUrl}/rest/v1/`
+  : null;
+
 export const supabase = hasSupabaseConfig
   ? createClient(supabaseUrl, supabaseKey)
   : null;

@@ -72,6 +72,7 @@ function errorResponse(message, error) {
     details: error?.message || "Unknown backend error.",
     code: error?.code || null,
     hint: error?.hint || null,
+    cause: error?.cause?.message || null,
   };
 }
 
@@ -181,7 +182,7 @@ router.post("/users/signup", async (req, res) => {
 
     return res.status(201).json({ user: toClientUser(createdUser) });
   } catch (error) {
-    console.error("User signup failed:", error.message);
+    console.error("User signup failed:", error.message, error.cause?.message || "");
     return res.status(500).json(errorResponse("Unable to create user.", error));
   }
 });
@@ -210,7 +211,7 @@ router.post("/users/login", async (req, res) => {
 
     return res.json({ user: toClientUser(user) });
   } catch (error) {
-    console.error("User login failed:", error.message);
+    console.error("User login failed:", error.message, error.cause?.message || "");
     return res.status(500).json(errorResponse("Unable to log in user.", error));
   }
 });
