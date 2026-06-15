@@ -100,6 +100,7 @@ function toClientUser(row) {
     placeOfBirth: row.place_of_birth || "",
     placesLived: row.places_lived || [],
     consentAccepted: Boolean(row.consent_accepted),
+    active: row.active !== false,
   };
 }
 
@@ -211,6 +212,10 @@ router.post("/users/login", async (req, res) => {
 
     if (!user) {
       return res.status(404).json({ error: "No user found for that username." });
+    }
+
+    if (user.active === false) {
+      return res.status(403).json({ error: "This account is inactive. Please contact the project team." });
     }
 
     return res.json({ user: toClientUser(user) });

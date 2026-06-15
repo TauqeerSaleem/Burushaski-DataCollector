@@ -27,11 +27,11 @@ const dashboardCopy = {
   [USER_ROLES.ADMIN]: {
     title: "Admin Dashboard",
     description:
-      "Administrative monitoring tools will appear here once the database and reporting flow is connected.",
+      "Administrative monitoring tools are protected behind the admin login.",
     nextSteps: [
-      "Review users by role, dialect, and participation status",
-      "Monitor recording and validation progress",
-      "Check data balance across dialect and gender groups",
+      "Open the protected admin panel",
+      "Review users, recordings, feedback, and admin activity",
+      "Create or manage database-backed admins",
     ],
   },
 };
@@ -75,6 +75,15 @@ export default function RoleDashboard() {
             ))}
           </ul>
         </div>
+
+        {role === USER_ROLES.ADMIN && (
+          <a
+            href="/admin"
+            className="inline-flex rounded-lg bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300"
+          >
+            Open admin panel
+          </a>
+        )}
 
         <p className="text-sm text-neutral-400">
           Dashboard tools for this role are being connected.

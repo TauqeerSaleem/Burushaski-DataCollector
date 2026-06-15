@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import webpush from "web-push";
 import { startCronJobs } from "./jobs/cronJobs.js";
+import adminRoutes from "./routes/admin.js";
 import reminderRoutes from "./routes/reminders.js";
 import userRoutes from "./routes/users.js";
 import { supabase } from "./supabaseClient.js";
@@ -26,7 +27,13 @@ function allowedOrigins() {
 // ============================================
 // MIDDLEWARE
 // ============================================
-app.use(express.json());
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "same-origin");
+  next();
+});
+app.use(express.json({ limit: "1mb" }));
 app.use(cors({ origin: allowedOrigins() }));
 
 // ============================================
@@ -73,6 +80,7 @@ app.get("/api/health", healthCheck);
 // ============================================
 app.use("/api", reminderRoutes);
 app.use("/api", userRoutes);
+app.use("/api", adminRoutes);
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE

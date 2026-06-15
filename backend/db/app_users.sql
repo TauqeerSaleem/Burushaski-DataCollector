@@ -21,6 +21,7 @@ create table if not exists public.app_users (
   place_of_birth text,
   places_lived text[] not null default '{}',
   consent_accepted boolean not null default false,
+  active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -39,11 +40,13 @@ alter table public.app_users add column if not exists comfort_language text;
 alter table public.app_users add column if not exists place_of_birth text;
 alter table public.app_users add column if not exists places_lived text[] not null default '{}';
 alter table public.app_users add column if not exists consent_accepted boolean not null default false;
+alter table public.app_users add column if not exists active boolean not null default true;
 alter table public.app_users add column if not exists created_at timestamptz not null default now();
 alter table public.app_users add column if not exists updated_at timestamptz not null default now();
 
 create index if not exists app_users_role_idx on public.app_users (role);
 create index if not exists app_users_dialect_idx on public.app_users (dialect);
+create index if not exists app_users_active_idx on public.app_users (active);
 
 create or replace function public.set_updated_at()
 returns trigger

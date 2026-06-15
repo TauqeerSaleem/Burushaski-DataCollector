@@ -11,6 +11,8 @@ import RoleDashboard from "./pages/RoleDashboard";
 import ModuleView from "./pages/ModuleView";
 import Stats from "./pages/Stats";
 import VolunteerRoute from "./pages/VolunteerRoute";
+import AdminLogin from "./pages/AdminLogin";
+import AdminPanel from "./pages/AdminPanel";
 import { syncPendingRecordings } from "./utils/syncRecordings";
 
 export default function App() {
@@ -51,6 +53,8 @@ export default function App() {
         <Route path="/consent" element={<Consent />} />
         <Route path="/instructions" element={<Instructions />} />
         <Route path="/dashboard" element={<RoleDashboard />} />
+        <Route path="/admin/login" element={<AdminLogin />} />
+        <Route path="/admin" element={<AdminPanel />} />
         <Route path="/module/:moduleId" element={<VolunteerRoute><ModuleView /></VolunteerRoute>} />
         <Route path="/stats" element={<VolunteerRoute><Stats /></VolunteerRoute>} />
       </Routes>
