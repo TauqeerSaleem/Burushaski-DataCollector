@@ -37,4 +37,8 @@ export async function uploadRecording({
     console.error("DB insert failed:", dbError);
     throw dbError;
   }
+  if (uploadError) {
+    console.error("Audio upload failed (full):", JSON.stringify(uploadError, null, 2));
+    throw uploadError;
+}
 }

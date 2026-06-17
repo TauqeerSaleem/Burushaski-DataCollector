@@ -76,21 +76,10 @@ export default function Instructions() {
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
               <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">1</span>
-              Select a Section
-            </h2>
-            <p className="text-gray-700 pl-10">
-              Each section contains multiple sentences to record. Choose a section from the dashboard to begin.
-            </p>
-          </div>
-
-          {/* Step 2 */}
-          <div className="space-y-2">
-            <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">2</span>
               Read the Burushaski Text
             </h2>
             <p className="text-gray-700 pl-10">
-              You will see an <span className="text-gray-500 italic">English sentence</span> and a <span className="font-bold">Burushaski transliteration</span> (in bold).
+              You'll see one sentence at a time: an <span className="text-gray-500 italic">English sentence</span> and a <span className="font-bold">Burushaski transliteration</span> (in bold).
             </p>
             <div className="pl-10 bg-gray-50 p-4 rounded-lg border-l-4 border-yellow-400">
               <p className="text-sm text-gray-500 italic mb-1">I like mangoes.</p>
@@ -101,10 +90,10 @@ export default function Instructions() {
             </p>
           </div>
 
-          {/* Step 3 */}
+          {/* Step 2 */}
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">3</span>
+              <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">2</span>
               Record Your Voice
             </h2>
             <p className="text-gray-700 pl-10">
@@ -118,10 +107,10 @@ export default function Instructions() {
             </div>
           </div>
 
-          {/* Step 4 */}
+          {/* Step 3 */}
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">4</span>
+              <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">3</span>
               Stop Recording
             </h2>
             <p className="text-gray-700 pl-10">
@@ -135,10 +124,10 @@ export default function Instructions() {
             </div>
           </div>
 
-          {/* Step 5 */}
+          {/* Step 4 */}
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">5</span>
+              <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">4</span>
               Playback & Review
             </h2>
             <p className="text-gray-700 pl-10">
@@ -146,14 +135,25 @@ export default function Instructions() {
             </p>
           </div>
 
+          {/* Step 5 */}
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+              <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">5</span>
+              Submit & Continue
+            </h2>
+            <p className="text-gray-700 pl-10">
+              Click <span className="font-semibold">Submit</span> to save the recording. A new sentence will automatically appear next.
+            </p>
+          </div>
+
           {/* Step 6 */}
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
               <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">6</span>
-              Submit & Continue
+              Skip a Sentence
             </h2>
             <p className="text-gray-700 pl-10">
-              Click <span className="font-semibold">Submit</span> to mark the sentence complete and move forward.
+              If a sentence feels too difficult or unclear, click <span className="font-semibold">Skip</span> to move to a different one.
             </p>
           </div>
 

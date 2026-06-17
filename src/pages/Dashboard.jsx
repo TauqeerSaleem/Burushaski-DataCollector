@@ -1,4 +1,3 @@
-
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
@@ -19,14 +18,13 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Recording/review state
   const [audioBlob, setAudioBlob] = useState(null);
   const [audioUrl, setAudioUrl] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [showSuccess, setShowSuccess] = useState(false);
   const audioUrlRef = useRef(null);
 
-  // Fetch prompts + this user's recordings + global recording counts
   useEffect(() => {
     if (!user) return;
 
@@ -47,14 +45,11 @@ export default function Dashboard() {
         supabase.from("recordings").select("sentence_id"),
       ]);
 
-    
-
       if (sErr || rErr || gErr) {
         setError((sErr || rErr || gErr).message);
         setLoading(false);
         return;
       }
-    
 
       const counts = {};
       (allRecordings || []).forEach((r) => {
@@ -70,7 +65,6 @@ export default function Dashboard() {
     load();
   }, [user]);
 
-  // Pick a new random card from the pool
   const pickNextCard = useCallback(() => {
     if (!allSentences) return;
     const pool = buildPool(allSentences, recordedIds, globalCounts, user.dialect);
@@ -81,12 +75,18 @@ export default function Dashboard() {
     if (allSentences) pickNextCard();
   }, [allSentences, recordedIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clean up the object URL whenever it changes or component unmounts
   useEffect(() => {
     return () => {
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     };
   }, []);
+
+  // Auto-hide success message after a couple seconds
+  useEffect(() => {
+    if (!showSuccess) return;
+    const timer = setTimeout(() => setShowSuccess(false), 2500);
+    return () => clearTimeout(timer);
+  }, [showSuccess]);
 
   const clearRecordingState = () => {
     if (audioUrlRef.current) {
@@ -143,16 +143,14 @@ export default function Dashboard() {
         sentenceId: currentCard.prompt_id,
       });
 
-      // Exclude from this volunteer's pool going forward this session
       setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
-      // Bump the global count locally so the next pick reflects it immediately
       setGlobalCounts((prev) => ({
         ...prev,
         [currentCard.prompt_id]: (prev[currentCard.prompt_id] || 0) + 1,
       }));
 
       clearRecordingState();
-      // pickNextCard will run automatically via the recordedIds effect above
+      setShowSuccess(true);
     } catch (err) {
       console.error("Upload failed:", err);
       setUploadError("Upload failed. Please check your connection and try again.");
@@ -222,30 +220,41 @@ export default function Dashboard() {
         </p>
       )}
 
+      {/* Success message */}
+      {showSuccess && (
+        <div className="bg-green-100 text-green-800 rounded-lg px-4 py-2 text-sm font-semibold flex items-center gap-2 max-w-2xl mx-auto">
+          ✓ Recording saved
+        </div>
+      )}
+
       {/* Loading / error states */}
       {loading && <p className="text-gray-400">Loading sentences…</p>}
       {error && <p className="text-red-400">Error: {error}</p>}
 
       {/* Flashcard */}
       {!loading && !error && currentCard && (
-        <div className="bg-white text-black rounded-2xl shadow-2xl p-6 space-y-4">
-          <p className="text-sm text-gray-500 italic">{currentCard.english}</p>
-          <p className="text-2xl font-bold">{currentCard.transliteration}</p>
+        <div className="bg-white text-black rounded-3xl shadow-2xl p-10 md:p-14 space-y-8 max-w-2xl mx-auto min-h-[420px] flex flex-col justify-center">
+          <div className="text-center space-y-4">
+            <p className="text-base text-gray-500 italic">{currentCard.english}</p>
+            <p className="text-3xl md:text-4xl font-bold leading-snug">{currentCard.transliteration}</p>
+          </div>
 
-          {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
+          {uploadError && (
+            <p className="text-sm text-red-600 text-center">{uploadError}</p>
+          )}
 
           {/* Step 1: nothing recorded yet — show Record + Skip */}
           {!audioBlob && !isRecording && (
             <div className="flex gap-3 pt-2">
               <button
                 onClick={handleStartRecording}
-                className="flex-1 bg-black text-white py-3 rounded-xl font-semibold"
+                className="flex-1 bg-black text-white py-4 rounded-xl font-semibold text-lg"
               >
                 🎙️ Record
               </button>
               <button
                 onClick={handleSkip}
-                className="px-5 py-3 rounded-xl font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300"
+                className="px-6 py-4 rounded-xl font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300"
               >
                 Skip
               </button>
@@ -256,7 +265,7 @@ export default function Dashboard() {
           {isRecording && (
             <button
               onClick={handleStopRecording}
-              className="w-full bg-red-600 text-white py-3 rounded-xl font-semibold"
+              className="w-full bg-red-600 text-white py-4 rounded-xl font-semibold text-lg"
             >
               ⏹️ Stop
             </button>
@@ -264,21 +273,21 @@ export default function Dashboard() {
 
           {/* Step 3: recorded, reviewing — show playback + Re-record/Submit */}
           {audioBlob && !isRecording && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <audio src={audioUrl} controls className="w-full" />
 
               <div className="flex gap-3">
                 <button
                   onClick={handleReRecord}
                   disabled={uploading}
-                  className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl font-semibold hover:bg-gray-300 disabled:opacity-50"
+                  className="flex-1 bg-gray-200 text-gray-700 py-4 rounded-xl font-semibold hover:bg-gray-300 disabled:opacity-50"
                 >
                   Re-record
                 </button>
                 <button
                   onClick={handleSubmit}
                   disabled={uploading}
-                  className="flex-1 bg-yellow-400 text-black py-3 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
+                  className="flex-1 bg-yellow-400 text-black py-4 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
                 >
                   {uploading ? "Submitting…" : "Submit"}
                 </button>
@@ -290,7 +299,7 @@ export default function Dashboard() {
 
       {/* Done state */}
       {!loading && !error && !currentCard && allSentences && (
-        <div className="bg-white text-black rounded-2xl shadow-2xl p-6 text-center">
+        <div className="bg-white text-black rounded-3xl shadow-2xl p-10 text-center max-w-2xl mx-auto">
           <p className="text-lg font-semibold">🎉 All sentences recorded!</p>
           <p className="text-gray-500 text-sm mt-1">
             Check back later for new sentences.
