@@ -1,5 +1,8 @@
 import { useState, useRef } from "react";
-import { supabase } from "../utils/supabase";
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://localhost:3001" : "");
 
 export default function FeedbackModal({
   open,
@@ -63,43 +66,30 @@ export default function FeedbackModal({
     setError(null);
 
     try {
-      // 1. Upload audio to Supabase Storage
-      const fileName = `feedback_${participantId}_${moduleId}_s${sentenceNumber}_${Date.now()}.webm`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("feedback-audio")
-        .upload(fileName, audioBlob, { contentType: "audio/webm" });
-
-      if (uploadError) throw uploadError;
-
-      // 2. Get public URL
-      const { data: urlData } = supabase.storage
-        .from("feedback-audio")
-        .getPublicUrl(fileName);
-
-      const audioPublicUrl = urlData?.publicUrl ?? null;
-
-      // 3. Insert row into feedback table
-      const { error: insertError } = await supabase.from("feedback").insert({
-        participant_id: participantId,
-        module_id: moduleId,
-        sentence_id: sentenceId,
-        sentence_number: sentenceNumber,
-        correct_english: correctEnglish.trim(),
-        audio_url: audioPublicUrl,
-        created_at: new Date().toISOString(),
+      const response = await fetch(`${API_BASE_URL}/api/feedback-audio`, {
+        method: "POST",
+        headers: {
+          "Content-Type": audioBlob.type || "audio/webm",
+          "X-Participant-Id": participantId,
+          "X-Module-Id": moduleId,
+          "X-Sentence-Id": sentenceId,
+          "X-Sentence-Number": String(sentenceNumber),
+          "X-Correction": encodeURIComponent(correctEnglish.trim()),
+        },
+        body: audioBlob,
       });
+      const data = await response.json().catch(() => ({}));
 
-      if (insertError) throw insertError;
+      if (!response.ok) {
+        throw new Error(data.error || "Feedback submission failed.");
+      }
 
-      // 4. Notify parent + close
       onSubmit?.({
         sentenceNumber,
         correctEnglish: correctEnglish.trim(),
-        audioUrl: audioPublicUrl,
+        audioUrl: data.feedback?.audioUrl,
       });
 
-      // Reset
       setCorrectEnglish("");
       setAudioBlob(null);
       setAudioUrl(null);

@@ -81,15 +81,12 @@ export default function Login() {
         </Link>
       </p>
 
-      <div className="border-t border-neutral-800 pt-4">
-        <button
-          type="button"
-          onClick={() => navigate("/admin/login")}
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-900 py-2 text-sm font-semibold text-white hover:border-yellow-400 hover:text-yellow-300"
-        >
-          Login as Admin
-        </button>
-      </div>
+      <p className="text-center text-xs text-gray-500">
+        Admin access?{" "}
+        <Link to="/admin/login" className="text-yellow-400 hover:text-yellow-300 underline">
+          Log in here
+        </Link>
+      </p>
     </AuthCard>
   );
 }

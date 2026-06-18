@@ -1,19 +1,26 @@
-// uploadFeedback.js
-import { supabase } from "./supabase";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://localhost:3001" : "");
 
 export async function uploadFeedback(feedback) {
-  const { error } = await supabase
-    .from("feedback")
-    .insert({
-      participant_id: feedback.participantId,
-      module_id: feedback.moduleId,
-      sentence_number: feedback.sentenceNumber,
+  const response = await fetch(`${API_BASE_URL}/api/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      participantId: feedback.participantId,
+      moduleId: feedback.moduleId,
+      sentenceId: feedback.sentenceId,
+      sentenceNumber: feedback.sentenceNumber,
       correction: feedback.correction,
-      created_at: feedback.createdAt,
-    });
+      correctEnglish: feedback.correctEnglish,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
 
-  if (error) {
-    console.error("Feedback upload failed:", error);
-    throw error;
+  if (!response.ok) {
+    console.error("Feedback upload failed:", data.error);
+    throw new Error(data.error || "Feedback upload failed.");
   }
+
+  return data.feedback;
 }

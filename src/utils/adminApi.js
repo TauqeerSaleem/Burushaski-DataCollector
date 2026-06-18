@@ -99,8 +99,35 @@ export async function fetchAdminData() {
   return request("/api/admin/data");
 }
 
-export async function fetchAdminRecords(page = 1, pageSize = 50) {
-  return request(`/api/admin/records?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`);
+function toQuery(params) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "" && value !== "all") {
+      searchParams.set(key, value);
+    }
+  });
+
+  return searchParams.toString();
+}
+
+export async function fetchAdminRecords(page = 1, pageSize = 50, filters = {}) {
+  const query = toQuery({ page, pageSize, ...filters });
+  return request(`/api/admin/records?${query}`);
+}
+
+export async function fetchAdminCorrections(filters = {}) {
+  const query = toQuery(filters);
+  return request(`/api/admin/corrections${query ? `?${query}` : ""}`);
+}
+
+export async function approvePromptCorrection(payload) {
+  const data = await request("/api/admin/corrections/approve", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+  return data.review;
 }
 
 export async function exportAdminData(type) {

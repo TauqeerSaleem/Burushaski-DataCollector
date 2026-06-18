@@ -16,6 +16,7 @@ import {
 
 const router = express.Router();
 const USERNAME_PATTERN = /^[a-zA-Z0-9._-]{3,32}$/;
+const MIN_ADMIN_PASSWORD_LENGTH = 10;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 8;
 const DATA_PAGE_SIZE = 50;
@@ -79,8 +80,23 @@ function cleanDialect(value) {
   return dialect && /^[a-zA-Z0-9_-]{1,40}$/.test(dialect) ? dialect : null;
 }
 
+function cleanSearch(value) {
+  return cleanText(value)?.replace(/[(),]/g, " ").slice(0, 120) || null;
+}
+
 function cleanMimeType(value, fallback = null) {
   return cleanText(value)?.split(";")[0].trim().toLowerCase() || fallback;
+}
+
+function cleanEncodedHeader(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+
+  try {
+    return cleanText(decodeURIComponent(text));
+  } catch {
+    return text;
+  }
 }
 
 function cleanFileName(value) {
@@ -91,8 +107,35 @@ function cleanFileName(value) {
     .slice(0, 80) || "prompt-image";
 }
 
+function recordingExtension(contentType) {
+  return contentType.includes("mp4")
+    ? "m4a"
+    : contentType.includes("mpeg")
+      ? "mp3"
+      : contentType.includes("wav")
+        ? "wav"
+        : "webm";
+}
+
 function cryptoRandomId() {
   return crypto.randomBytes(8).toString("hex");
+}
+
+function slugify(value, fallback = "admin") {
+  const slug = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return slug || fallback;
+}
+
+function generatePromptId(payload) {
+  const group = slugify(payload.module_title || payload.module_id || "prompt").slice(0, 24);
+  const stamp = Date.now().toString(36);
+  const random = cryptoRandomId().slice(0, 8);
+  return `${group}-${stamp}-${random}`;
 }
 
 function csvEscape(value) {
@@ -116,12 +159,25 @@ function sendCsv(res, filename, rows, columns) {
   res.send(toCsv(rows, columns));
 }
 
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
   try {
     const admin = verifyAdminToken(getBearerToken(req));
 
     if (!admin) {
       return res.status(401).json({ error: "Admin login required." });
+    }
+
+    if (!admin.isMaster && hasSupabaseConfig && hasServiceRoleKey && supabase) {
+      const { data, error } = await supabase
+        .from("admin_accounts")
+        .select("active")
+        .eq("id", admin.id)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data || data.active === false) {
+        return res.status(401).json({ error: "Admin account is inactive." });
+      }
     }
 
     req.admin = admin;
@@ -283,11 +339,31 @@ function recordingToClient(row) {
     moduleId: row.module_id,
     sentenceId: row.sentence_id,
     audioPath: row.audio_path,
+    audioUrl: row.audio_url || "",
     createdAt: row.created_at,
     promptEnglish: row.prompt_english || "",
     promptType: row.prompt_type || "",
     promptDialect: row.prompt_dialect || "",
     moduleTitle: row.prompt_module_title || "",
+  };
+}
+
+function correctionToClient(row) {
+  const correctionText = row.correct_english || row.correction || "";
+
+  return {
+    id: row.id,
+    participantId: row.participant_id || "",
+    moduleId: row.module_id || "",
+    promptId: row.sentence_id || "",
+    sentenceNumber: row.sentence_number || "",
+    correction: correctionText,
+    audioPath: row.audio_url || "",
+    audioUrl: row.signed_audio_url || row.audio_url || "",
+    createdAt: row.created_at,
+    promptEnglish: row.prompt_english || "",
+    moduleTitle: row.prompt_module_title || row.module_id || "",
+    promptType: row.prompt_type || "",
   };
 }
 
@@ -396,6 +472,22 @@ async function writeActivity(admin, action, targetType, targetId, details = {}) 
   });
 }
 
+async function requireActiveParticipant(participantId, res) {
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("participant_id, role, active")
+    .eq("participant_id", participantId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data || data.active === false || normalizeUserRole(data.role) === USER_ROLES.ADMIN) {
+    res.status(403).json({ error: "Active participant account required." });
+    return null;
+  }
+
+  return data;
+}
+
 router.get("/prompts", async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
@@ -499,6 +591,8 @@ router.post(
         return res.status(400).json({ error: "Participant, module, and prompt IDs are required." });
       }
 
+      if (!(await requireActiveParticipant(participantId, res))) return;
+
       const { data: existing, error: existingError } = await supabase
         .from("recordings")
         .select("id")
@@ -512,13 +606,7 @@ router.post(
         return res.status(409).json({ error: "This prompt has already been recorded by this volunteer." });
       }
 
-      const extension = contentType.includes("mp4")
-        ? "m4a"
-        : contentType.includes("mpeg")
-          ? "mp3"
-          : contentType.includes("wav")
-            ? "wav"
-            : "webm";
+      const extension = recordingExtension(contentType);
       const filePath = `${dialect || "unknown"}/${participantId}/${moduleId}/${sentenceId}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
@@ -543,7 +631,10 @@ router.post(
         .select("*")
         .single();
 
-      if (dbError) throw dbError;
+      if (dbError) {
+        await supabase.storage.from("audio-recordings").remove([filePath]);
+        throw dbError;
+      }
 
       res.status(201).json({ recording: recordingToClient(data) });
     } catch (error) {
@@ -554,6 +645,111 @@ router.post(
           ? "This prompt has already been recorded by this volunteer."
           : "Unable to upload recording.",
       });
+    }
+  }
+);
+
+router.post("/feedback", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const participantId = cleanText(req.body.participantId);
+    const moduleId = cleanText(req.body.moduleId);
+    const sentenceId = cleanText(req.body.sentenceId);
+    const sentenceNumber = cleanInteger(req.body.sentenceNumber, null, 1);
+    const correction = cleanText(req.body.correction || req.body.correctEnglish);
+
+    if (!participantId || !moduleId || !sentenceId || !correction) {
+      return res.status(400).json({ error: "Participant, prompt, and correction are required." });
+    }
+
+    if (!(await requireActiveParticipant(participantId, res))) return;
+
+    const { data, error } = await supabase
+      .from("feedback")
+      .insert({
+        participant_id: participantId,
+        module_id: moduleId,
+        sentence_id: sentenceId,
+        sentence_number: sentenceNumber,
+        correction,
+        correct_english: cleanText(req.body.correctEnglish),
+        audio_url: cleanText(req.body.audioPath),
+      })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+
+    res.status(201).json({ feedback: correctionToClient(data) });
+  } catch (error) {
+    console.error("Feedback submit failed:", error.message);
+    res.status(500).json({ error: "Unable to submit feedback." });
+  }
+});
+
+router.post(
+  "/feedback-audio",
+  express.raw({ type: Array.from(ALLOWED_RECORDING_TYPES), limit: MAX_RECORDING_BYTES }),
+  async (req, res) => {
+    try {
+      if (!requireServiceRole(res)) return;
+
+      const contentType = cleanMimeType(req.get("content-type"), "audio/webm");
+      if (!ALLOWED_RECORDING_TYPES.has(contentType)) {
+        return res.status(415).json({ error: "Unsupported feedback audio format." });
+      }
+
+      if (!req.body || req.body.length === 0) {
+        return res.status(400).json({ error: "No feedback audio received." });
+      }
+
+      const participantId = cleanText(req.get("x-participant-id"));
+      const moduleId = cleanText(req.get("x-module-id"));
+      const sentenceId = cleanText(req.get("x-sentence-id"));
+      const sentenceNumber = cleanInteger(req.get("x-sentence-number"), null, 1);
+      const correction = cleanEncodedHeader(req.get("x-correction"));
+
+      if (!participantId || !moduleId || !sentenceId || !correction) {
+        return res.status(400).json({ error: "Participant, prompt, and correction are required." });
+      }
+
+      if (!(await requireActiveParticipant(participantId, res))) return;
+
+      const extension = recordingExtension(contentType);
+      const filePath = `${participantId}/${moduleId}/${sentenceId}/${Date.now()}-${cryptoRandomId()}.${extension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("feedback-audio")
+        .upload(filePath, req.body, {
+          contentType,
+          upsert: false,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data, error: dbError } = await supabase
+        .from("feedback")
+        .insert({
+          participant_id: participantId,
+          module_id: moduleId,
+          sentence_id: sentenceId,
+          sentence_number: sentenceNumber,
+          correct_english: correction,
+          audio_url: filePath,
+        })
+        .select("*")
+        .single();
+
+      if (dbError) {
+        await supabase.storage.from("feedback-audio").remove([filePath]);
+        throw dbError;
+      }
+
+      res.status(201).json({ feedback: correctionToClient(data) });
+    } catch (error) {
+      console.error("Feedback audio submit failed:", error.message);
+      res.status(500).json({ error: "Unable to submit feedback audio." });
     }
   }
 );
@@ -638,18 +834,12 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
     const [
       usersResult,
       recordingsResult,
-      feedbackResult,
-      subscriptionsResult,
-      logsResult,
     ] = await Promise.all([
       supabase.from("app_users").select("role, dialect, gender, created_at"),
       supabase.from("recordings").select("participant_id, module_id, sentence_id, created_at"),
-      supabase.from("feedback").select("participant_id, created_at"),
-      supabase.from("push_subscriptions").select("participant_id, updated_at"),
-      supabase.from("notification_logs").select("status, sent_at"),
     ]);
 
-    const errors = [usersResult, recordingsResult, feedbackResult, subscriptionsResult, logsResult]
+    const errors = [usersResult, recordingsResult]
       .map((result) => result.error)
       .filter(Boolean);
 
@@ -657,7 +847,6 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
 
     const users = usersResult.data || [];
     const recordings = recordingsResult.data || [];
-    const feedback = feedbackResult.data || [];
 
     const countBy = (rows, key) =>
       rows.reduce((map, row) => {
@@ -670,9 +859,6 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
       totals: {
         users: users.length,
         recordings: recordings.length,
-        feedback: feedback.length,
-        pushSubscriptions: subscriptionsResult.data?.length || 0,
-        notificationLogs: logsResult.data?.length || 0,
       },
       usersByRole: countBy(users, "role"),
       usersByDialect: countBy(users, "dialect"),
@@ -680,7 +866,6 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
       recordingsByModule: countBy(recordings, "module_id"),
       recentUsers: users.slice(-8).reverse(),
       recentRecordings: recordings.slice(-8).reverse(),
-      recentFeedback: feedback.slice(-8).reverse(),
     });
   } catch (error) {
     console.error("Admin overview failed:", error.message);
@@ -771,30 +956,273 @@ router.get("/admin/data", requireAdmin, async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
 
-    const [recordings, feedback, subscriptions, notificationLogs, activityLogs] = await Promise.all([
-      supabase.from("recordings").select("*").order("created_at", { ascending: false }).limit(200),
-      supabase.from("feedback").select("*").order("created_at", { ascending: false }).limit(200),
-      supabase.from("push_subscriptions").select("*").order("updated_at", { ascending: false }).limit(200),
-      supabase.from("notification_logs").select("*").order("sent_at", { ascending: false }).limit(200),
-      supabase.from("admin_activity_logs").select("*").order("created_at", { ascending: false }).limit(100),
-    ]);
+    const feedback = await supabase.from("feedback").select("*").order("created_at", { ascending: false }).limit(EXPORT_LIMIT);
 
-    const error = [recordings, feedback, subscriptions, notificationLogs, activityLogs]
-      .map((result) => result.error)
-      .find(Boolean);
+    const error = feedback.error;
 
     if (error) throw error;
 
     res.json({
-      recordings: recordings.data || [],
       feedback: feedback.data || [],
-      subscriptions: subscriptions.data || [],
-      notificationLogs: notificationLogs.data || [],
-      activityLogs: activityLogs.data || [],
     });
   } catch (error) {
     console.error("Admin data failed:", error.message);
     res.status(500).json({ error: "Unable to load data." });
+  }
+});
+
+router.get("/admin/corrections", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const search = cleanSearch(req.query.search);
+    const participantId = cleanText(req.query.participantId);
+    const moduleId = cleanText(req.query.moduleId);
+    const promptId = cleanText(req.query.promptId);
+
+    let query = supabase
+      .from("feedback")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(EXPORT_LIMIT);
+
+    if (participantId) query = query.eq("participant_id", participantId);
+    if (moduleId) query = query.eq("module_id", moduleId);
+    if (promptId) query = query.eq("sentence_id", promptId);
+    if (search) {
+      query = query.or(
+        [
+          `participant_id.ilike.%${search}%`,
+          `module_id.ilike.%${search}%`,
+          `sentence_id.ilike.%${search}%`,
+          `correct_english.ilike.%${search}%`,
+          `correction.ilike.%${search}%`,
+        ].join(",")
+      );
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const promptKeys = (data || [])
+      .filter((row) => row.module_id && row.sentence_id)
+      .map((row) => ({ moduleId: row.module_id, promptId: row.sentence_id }));
+    const promptIds = Array.from(new Set(promptKeys.map((key) => key.promptId)));
+
+    let promptRows = [];
+    if (promptIds.length) {
+      const { data: prompts, error: promptError } = await supabase
+        .from("prompt_bank")
+        .select("id, prompt_id, module_id, module_title, prompt_type, dialect, english, transliteration")
+        .in("prompt_id", promptIds);
+
+      if (promptError) throw promptError;
+      promptRows = prompts || [];
+    }
+
+    const promptMap = new Map(promptRows.map((prompt) => [`${prompt.module_id}:${prompt.prompt_id}`, prompt]));
+
+    let reviews = [];
+    if (promptKeys.length) {
+      const { data: reviewRows, error: reviewError } = await supabase
+        .from("prompt_correction_reviews")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(EXPORT_LIMIT);
+
+      if (reviewError) throw reviewError;
+      reviews = reviewRows || [];
+    }
+
+    const reviewsByPrompt = new Map();
+    reviews.forEach((review) => {
+      const key = `${review.module_id}:${review.prompt_id}`;
+      reviewsByPrompt.set(key, [...(reviewsByPrompt.get(key) || []), review]);
+    });
+
+    const correctionsWithAudio = await Promise.all(
+      (data || []).map(async (row) => {
+        if (!row.audio_url) return row;
+
+        const { data: signedAudio } = await supabase.storage
+          .from("feedback-audio")
+          .createSignedUrl(row.audio_url, 60 * 60);
+
+        return {
+          ...row,
+          signed_audio_url: signedAudio?.signedUrl || "",
+        };
+      })
+    );
+
+    const groups = new Map();
+    correctionsWithAudio.forEach((row) => {
+      const prompt = promptMap.get(`${row.module_id}:${row.sentence_id}`) || {};
+      const correction = correctionToClient({
+        ...row,
+        prompt_english: prompt.english,
+        prompt_type: prompt.prompt_type,
+        prompt_module_title: prompt.module_title,
+      });
+      const key = `${correction.moduleId}:${correction.promptId}`;
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          moduleId: correction.moduleId,
+          promptId: correction.promptId,
+          moduleTitle: correction.moduleTitle,
+          promptType: correction.promptType,
+          currentPrompt: correction.promptEnglish,
+          count: 0,
+          candidates: [],
+          corrections: [],
+          history: [],
+        });
+      }
+
+      const group = groups.get(key);
+      group.count += 1;
+      group.corrections.push(correction);
+
+      const candidateText = correction.correction;
+      if (candidateText) {
+        const existing = group.candidates.find((candidate) => candidate.text === candidateText);
+        if (existing) {
+          existing.count += 1;
+          existing.feedbackIds.push(correction.id);
+          existing.participants.push(correction.participantId);
+        } else {
+          group.candidates.push({
+            text: candidateText,
+            count: 1,
+            feedbackIds: [correction.id],
+            participants: [correction.participantId],
+          });
+        }
+      }
+    });
+
+    const groupedCorrections = Array.from(groups.values()).map((group) => {
+      group.candidates.sort((a, b) => b.count - a.count || a.text.localeCompare(b.text));
+      group.history = (reviewsByPrompt.get(`${group.moduleId}:${group.promptId}`) || []).map((review) => ({
+        id: review.id,
+        previousEnglish: review.previous_english || "",
+        acceptedCorrection: review.accepted_correction,
+        candidateCorrections: review.candidate_corrections || [],
+        acceptedFeedbackId: review.accepted_feedback_id,
+        reviewedBy: review.reviewed_by || "",
+        createdAt: review.created_at,
+      }));
+      return group;
+    });
+
+    groupedCorrections.sort((a, b) => b.count - a.count || a.moduleTitle.localeCompare(b.moduleTitle));
+
+    res.json({
+      corrections: correctionsWithAudio.map((row) => {
+        const prompt = promptMap.get(`${row.module_id}:${row.sentence_id}`) || {};
+        return correctionToClient({
+          ...row,
+          prompt_english: prompt.english,
+          prompt_type: prompt.prompt_type,
+          prompt_module_title: prompt.module_title,
+        });
+      }),
+      groups: groupedCorrections,
+      total: correctionsWithAudio.length,
+    });
+  } catch (error) {
+    console.error("Admin corrections failed:", error.message);
+    res.status(500).json({ error: "Unable to load corrections." });
+  }
+});
+
+router.post("/admin/corrections/approve", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const moduleId = cleanText(req.body.moduleId);
+    const promptId = cleanText(req.body.promptId);
+    const acceptedCorrection = cleanText(req.body.correction);
+    const acceptedFeedbackId = req.body.feedbackId ? cleanInteger(req.body.feedbackId, null, 1) : null;
+
+    if (!moduleId || !promptId || !acceptedCorrection) {
+      return res.status(400).json({ error: "Prompt group, prompt, and correction are required." });
+    }
+
+    const { data: promptRows, error: promptError } = await supabase
+      .from("prompt_bank")
+      .select("*")
+      .eq("module_id", moduleId)
+      .eq("prompt_id", promptId);
+
+    if (promptError) throw promptError;
+    if (!promptRows?.length) return res.status(404).json({ error: "Prompt not found." });
+
+    const { data: feedbackRows, error: feedbackError } = await supabase
+      .from("feedback")
+      .select("*")
+      .eq("module_id", moduleId)
+      .eq("sentence_id", promptId)
+      .order("created_at", { ascending: false })
+      .limit(EXPORT_LIMIT);
+
+    if (feedbackError) throw feedbackError;
+
+    const candidateMap = new Map();
+    (feedbackRows || []).forEach((row) => {
+      const text = row.correct_english || row.correction;
+      if (!text) return;
+      const current = candidateMap.get(text) || { text, count: 0, feedbackIds: [] };
+      current.count += 1;
+      current.feedbackIds.push(row.id);
+      candidateMap.set(text, current);
+    });
+
+    const candidateCorrections = Array.from(candidateMap.values()).sort((a, b) => b.count - a.count);
+    const previousEnglish = promptRows[0].english || "";
+
+    const { error: updateError } = await supabase
+      .from("prompt_bank")
+      .update({
+        english: acceptedCorrection,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("module_id", moduleId)
+      .eq("prompt_id", promptId);
+
+    if (updateError) throw updateError;
+
+    const { data: review, error: reviewError } = await supabase
+      .from("prompt_correction_reviews")
+      .insert({
+        prompt_bank_id: promptRows[0].id,
+        module_id: moduleId,
+        prompt_id: promptId,
+        previous_english: previousEnglish,
+        accepted_correction: acceptedCorrection,
+        candidate_corrections: candidateCorrections,
+        accepted_feedback_id: acceptedFeedbackId,
+        reviewed_by: req.admin.username,
+      })
+      .select("*")
+      .single();
+
+    if (reviewError) throw reviewError;
+
+    await writeActivity(req.admin, "approve_correction", "prompt", promptRows[0].id, {
+      moduleId,
+      promptId,
+      previousEnglish,
+      acceptedCorrection,
+      acceptedFeedbackId,
+    });
+
+    res.json({ review });
+  } catch (error) {
+    console.error("Admin correction approval failed:", error.message);
+    res.status(500).json({ error: "Unable to approve correction." });
   }
 });
 
@@ -804,14 +1232,43 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
 
     const page = cleanInteger(req.query.page, 1, 1);
     const pageSize = cleanInteger(req.query.pageSize, DATA_PAGE_SIZE, 1, MAX_DATA_PAGE_SIZE);
+    const participantId = cleanText(req.query.participantId);
+    const moduleId = cleanText(req.query.moduleId);
+    const search = cleanSearch(req.query.search);
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
-    const { data, error, count } = await supabase
+    let promptSearchIds = [];
+    if (search) {
+      const { data: matchingPrompts, error: promptSearchError } = await supabase
+        .from("prompt_bank")
+        .select("prompt_id")
+        .ilike("english", `%${search}%`)
+        .limit(1000);
+
+      if (promptSearchError) throw promptSearchError;
+      promptSearchIds = Array.from(new Set((matchingPrompts || []).map((prompt) => prompt.prompt_id)));
+    }
+
+    let query = supabase
       .from("recordings")
       .select("*", { count: "exact" })
-      .order("created_at", { ascending: false })
-      .range(from, to);
+      .order("created_at", { ascending: false });
+
+    if (participantId) query = query.eq("participant_id", participantId);
+    if (moduleId) query = query.eq("module_id", moduleId);
+    if (search) {
+      const searchClauses = [
+        `participant_id.ilike.%${search}%`,
+        `module_id.ilike.%${search}%`,
+        `sentence_id.ilike.%${search}%`,
+        `audio_path.ilike.%${search}%`,
+        ...promptSearchIds.map((promptId) => `sentence_id.eq.${promptId}`),
+      ];
+      query = query.or(searchClauses.join(","));
+    }
+
+    const { data, error, count } = await query.range(from, to);
 
     if (error) throw error;
 
@@ -832,17 +1289,24 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
       promptMap = new Map((promptRows || []).map((prompt) => [`${prompt.module_id}:${prompt.prompt_id}`, prompt]));
     }
 
-    res.json({
-      rows: (data || []).map((recording) => {
+    const rows = await Promise.all((data || []).map(async (recording) => {
         const prompt = promptMap.get(`${recording.module_id}:${recording.sentence_id}`) || {};
+        const { data: signedAudio } = await supabase.storage
+          .from("audio-recordings")
+          .createSignedUrl(recording.audio_path, 60 * 60);
+
         return recordingToClient({
           ...recording,
+          audio_url: signedAudio?.signedUrl,
           prompt_english: prompt.english,
           prompt_type: prompt.prompt_type,
           prompt_dialect: prompt.dialect,
           prompt_module_title: prompt.module_title,
         });
-      }),
+      }));
+
+    res.json({
+      rows,
       page,
       pageSize,
       total: count || 0,
@@ -1056,9 +1520,21 @@ router.post("/admin/prompts", requireAdmin, async (req, res) => {
 
     const payload = promptPayload(req.body, req.admin);
 
-    if (!payload.prompt_id || !payload.english) {
-      return res.status(400).json({ error: "Prompt ID and English prompt are required." });
+    if (!payload.english) {
+      return res.status(400).json({ error: "Volunteer-facing prompt text is required." });
     }
+
+    if (payload.prompt_type === "picture_description" && !payload.media_url) {
+      return res.status(400).json({ error: "Image prompts require an image URL or uploaded image." });
+    }
+
+    payload.prompt_id = payload.prompt_id || generatePromptId(payload);
+    payload.module_id = payload.module_id || slugify(payload.module_title, "admin-prompts");
+    payload.module_title = payload.module_title || "Admin Prompts";
+    payload.media_type = payload.prompt_type === "picture_description" ? "image" : payload.media_type || "none";
+    payload.difficulty = payload.difficulty || "short";
+    payload.weight = payload.weight || 1;
+    payload.sort_order = payload.sort_order || 0;
 
     const { data, error } = await supabase
       .from("prompt_bank")
@@ -1082,6 +1558,14 @@ router.patch("/admin/prompts/:id", requireAdmin, async (req, res) => {
 
     const payload = promptPayload(req.body);
     delete payload.created_by;
+
+    if (payload.prompt_type === "picture_description" && !payload.media_url) {
+      return res.status(400).json({ error: "Image prompts require an image URL or uploaded image." });
+    }
+
+    if (payload.prompt_type === "picture_description") {
+      payload.media_type = "image";
+    }
 
     const { data, error } = await supabase
       .from("prompt_bank")
@@ -1214,8 +1698,11 @@ router.post("/admin/admins", requireAdmin, async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
 
+    if (!req.admin.isMaster) {
+      return res.status(403).json({ error: "Only master admin can create admin accounts." });
+    }
+
     const username = cleanText(req.body.username);
-    const displayName = cleanText(req.body.displayName);
     const password = cleanOptionalText(req.body.password);
 
     if (!username || !USERNAME_PATTERN.test(username)) {
@@ -1228,12 +1715,16 @@ router.post("/admin/admins", requireAdmin, async (req, res) => {
       return res.status(403).json({ error: "Master admin is protected by environment variables." });
     }
 
+    if (!password || password.length < MIN_ADMIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: "Admin password must be at least 10 characters." });
+    }
+
     const passwordHash = hashPassword(password);
     const { data, error } = await supabase
       .from("admin_accounts")
       .insert({
         username,
-        display_name: displayName,
+        display_name: null,
         password_hash: passwordHash,
         created_by: req.admin.username,
         active: req.body.active !== false,
@@ -1256,17 +1747,34 @@ router.patch("/admin/admins/:id", requireAdmin, async (req, res) => {
     if (!requireServiceRole(res)) return;
 
     if (req.params.id === "master") {
-      return res.status(403).json({ error: "Master admin cannot be edited." });
+      return res.status(403).json({ error: "Master admin is managed by environment variables." });
+    }
+
+    const password = cleanOptionalText(req.body.password);
+    const isSelf = req.admin.id === req.params.id;
+
+    if (!req.admin.isMaster && !isSelf) {
+      return res.status(403).json({ error: "Admins can only edit their own account." });
+    }
+
+    if (password && password.length < MIN_ADMIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: "Admin password must be at least 10 characters." });
     }
 
     const payload = {
-      ...(req.body.displayName !== undefined ? { display_name: cleanText(req.body.displayName) } : {}),
-      ...(req.body.active !== undefined ? { active: Boolean(req.body.active) } : {}),
       updated_at: new Date().toISOString(),
     };
 
-    if (req.body.password) {
-      payload.password_hash = hashPassword(req.body.password);
+    if (req.body.active !== undefined) {
+      const active = Boolean(req.body.active);
+      if (!req.admin.isMaster && active) {
+        return res.status(403).json({ error: "Inactive admins must be re-enabled by master admin." });
+      }
+      payload.active = active;
+    }
+
+    if (password) {
+      payload.password_hash = hashPassword(password);
     }
 
     const { data, error } = await supabase
@@ -1295,15 +1803,18 @@ router.delete("/admin/admins/:id", requireAdmin, async (req, res) => {
       return res.status(403).json({ error: "Master admin cannot be deleted." });
     }
 
-    if (!req.admin.isMaster && req.admin.id === req.params.id) {
-      return res.status(403).json({ error: "Admins cannot delete their own account." });
+    if (!req.admin.isMaster && req.admin.id !== req.params.id) {
+      return res.status(403).json({ error: "Admins can only disable their own account." });
     }
 
-    const { error } = await supabase.from("admin_accounts").delete().eq("id", req.params.id);
+    const { error } = await supabase
+      .from("admin_accounts")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", req.params.id);
 
     if (error) throw error;
 
-    await writeActivity(req.admin, "delete_admin", "admin", req.params.id);
+    await writeActivity(req.admin, "disable_admin", "admin", req.params.id);
     res.status(204).send();
   } catch (error) {
     console.error("Admin delete failed:", error.message);

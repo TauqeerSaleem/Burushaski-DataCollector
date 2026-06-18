@@ -120,6 +120,19 @@ create table if not exists public.prompt_bank (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.prompt_correction_reviews (
+  id uuid primary key default gen_random_uuid(),
+  prompt_bank_id uuid references public.prompt_bank(id) on delete set null,
+  module_id text not null,
+  prompt_id text not null,
+  previous_english text,
+  accepted_correction text not null,
+  candidate_corrections jsonb not null default '[]'::jsonb,
+  accepted_feedback_id bigint references public.feedback(id) on delete set null,
+  reviewed_by text,
+  created_at timestamptz not null default now()
+);
+
 do $$
 begin
   alter table public.prompt_bank drop constraint if exists prompt_bank_prompt_id_key;
@@ -200,6 +213,10 @@ create index if not exists prompt_bank_module_idx on public.prompt_bank (module_
 create index if not exists prompt_bank_type_idx on public.prompt_bank (prompt_type);
 create unique index if not exists prompt_bank_prompt_dialect_uidx
 on public.prompt_bank (prompt_id, dialect);
+create index if not exists prompt_correction_reviews_prompt_idx
+on public.prompt_correction_reviews (module_id, prompt_id);
+create index if not exists prompt_correction_reviews_created_idx
+on public.prompt_correction_reviews (created_at);
 create index if not exists research_tasks_status_idx on public.research_tasks (status);
 create index if not exists research_tasks_assigned_idx on public.research_tasks (assigned_to);
 
@@ -279,41 +296,14 @@ alter table public.notification_logs enable row level security;
 alter table public.admin_accounts enable row level security;
 alter table public.admin_activity_logs enable row level security;
 alter table public.prompt_bank enable row level security;
+alter table public.prompt_correction_reviews enable row level security;
 alter table public.research_tasks enable row level security;
 
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public'
-      and tablename = 'recordings'
-      and policyname = 'anon can insert recordings'
-  ) then
-    create policy "anon can insert recordings"
-    on public.recordings
-    for insert
-    to anon
-    with check (true);
-  end if;
-end;
-$$;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public'
-      and tablename = 'feedback'
-      and policyname = 'anon can insert feedback'
-  ) then
-    create policy "anon can insert feedback"
-    on public.feedback
-    for insert
-    to anon
-    with check (true);
-  end if;
-end;
-$$;
+drop policy if exists "anon can insert recordings" on public.recordings;
+drop policy if exists "anon can insert feedback" on public.feedback;
+drop policy if exists "anon can upload audio recordings" on storage.objects;
+drop policy if exists "anon can update audio recordings" on storage.objects;
+drop policy if exists "anon can upload feedback audio" on storage.objects;
 
 do $$
 begin
@@ -329,58 +319,6 @@ begin
     to anon
     using (true)
     with check (true);
-  end if;
-end;
-$$;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'storage'
-      and tablename = 'objects'
-      and policyname = 'anon can upload audio recordings'
-  ) then
-    create policy "anon can upload audio recordings"
-    on storage.objects
-    for insert
-    to anon
-    with check (bucket_id = 'audio-recordings');
-  end if;
-end;
-$$;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'storage'
-      and tablename = 'objects'
-      and policyname = 'anon can update audio recordings'
-  ) then
-    create policy "anon can update audio recordings"
-    on storage.objects
-    for update
-    to anon
-    using (bucket_id = 'audio-recordings')
-    with check (bucket_id = 'audio-recordings');
-  end if;
-end;
-$$;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'storage'
-      and tablename = 'objects'
-      and policyname = 'anon can upload feedback audio'
-  ) then
-    create policy "anon can upload feedback audio"
-    on storage.objects
-    for insert
-    to anon
-    with check (bucket_id = 'feedback-audio');
   end if;
 end;
 $$;
