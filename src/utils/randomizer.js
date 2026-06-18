@@ -36,7 +36,7 @@ export function buildPool(allSentences, recordedIdsByUser, globalCountsByPromptI
   return allSentences
     .filter((s) => {
       if (!s.active) return false;
-      if (s.dialect !== dialect) return false;
+      if (s.dialect && s.dialect !== dialect) return false;
       if (recordedSet.has(s.prompt_id)) return false;
       return true;
     })

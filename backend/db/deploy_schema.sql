@@ -13,6 +13,7 @@ create table if not exists public.app_users (
     check (role in ('volunteer', 'content_contributor', 'researcher', 'admin')),
   display_name text,
   contact_preference text,
+  email text,
   mobile_number text,
   dialect text,
   dialects text[] not null default '{}',
@@ -100,11 +101,13 @@ create table if not exists public.prompt_bank (
   module_id text not null default 'admin-prompts',
   module_title text not null default 'Admin Prompts',
   prompt_type text not null default 'translation'
-    check (prompt_type in ('translation', 'elicitation', 'picture_description', 'validation')),
+    check (prompt_type in ('translation', 'elicitation', 'picture_description', 'validation', 'gamified')),
   dialect text,
   english text not null,
   transliteration text,
   media_url text,
+  media_type text not null default 'none'
+    check (media_type in ('none', 'image', 'audio')),
   difficulty text not null default 'short'
     check (difficulty in ('short', 'medium', 'long')),
   curriculum_stage text,
@@ -150,11 +153,43 @@ create table if not exists public.research_tasks (
 alter table public.app_users
 add column if not exists active boolean not null default true;
 
+alter table public.app_users
+add column if not exists email text;
+
+alter table public.prompt_bank
+add column if not exists media_type text not null default 'none';
+
+do $$
+begin
+  alter table public.prompt_bank drop constraint if exists prompt_bank_prompt_type_check;
+  alter table public.prompt_bank
+  add constraint prompt_bank_prompt_type_check
+  check (prompt_type in ('translation', 'elicitation', 'picture_description', 'validation', 'gamified'));
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'prompt_bank_media_type_check'
+      and conrelid = 'public.prompt_bank'::regclass
+  ) then
+    alter table public.prompt_bank
+    add constraint prompt_bank_media_type_check
+    check (media_type in ('none', 'image', 'audio'));
+  end if;
+end;
+$$;
+
 create index if not exists app_users_role_idx on public.app_users (role);
 create index if not exists app_users_dialect_idx on public.app_users (dialect);
 create index if not exists app_users_active_idx on public.app_users (active);
 create index if not exists recordings_participant_idx on public.recordings (participant_id);
 create index if not exists recordings_sentence_idx on public.recordings (module_id, sentence_id);
+create unique index if not exists recordings_one_per_prompt_uidx
+on public.recordings (participant_id, module_id, sentence_id);
 create index if not exists feedback_participant_idx on public.feedback (participant_id);
 create index if not exists admin_accounts_active_idx on public.admin_accounts (active);
 create index if not exists admin_activity_logs_admin_idx on public.admin_activity_logs (admin_username);
@@ -162,10 +197,26 @@ create index if not exists admin_activity_logs_created_idx on public.admin_activ
 create index if not exists prompt_bank_active_idx on public.prompt_bank (active);
 create index if not exists prompt_bank_dialect_idx on public.prompt_bank (dialect);
 create index if not exists prompt_bank_module_idx on public.prompt_bank (module_id);
+create index if not exists prompt_bank_type_idx on public.prompt_bank (prompt_type);
 create unique index if not exists prompt_bank_prompt_dialect_uidx
 on public.prompt_bank (prompt_id, dialect);
 create index if not exists research_tasks_status_idx on public.research_tasks (status);
 create index if not exists research_tasks_assigned_idx on public.research_tasks (assigned_to);
+
+create or replace view public.prompt_recording_counts as
+select
+  module_id,
+  sentence_id as prompt_id,
+  count(*)::integer as recording_count
+from public.recordings
+group by module_id, sentence_id;
+
+create or replace view public.participant_recording_counts as
+select
+  participant_id,
+  count(*)::integer as recording_count
+from public.recordings
+group by participant_id;
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -212,8 +263,13 @@ $$;
 insert into storage.buckets (id, name, public)
 values
   ('audio-recordings', 'audio-recordings', false),
-  ('feedback-audio', 'feedback-audio', false)
+  ('feedback-audio', 'feedback-audio', false),
+  ('prompt-media', 'prompt-media', true)
 on conflict (id) do nothing;
+
+update storage.buckets
+set public = true
+where id = 'prompt-media';
 
 alter table public.app_users enable row level security;
 alter table public.recordings enable row level security;

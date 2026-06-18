@@ -18,7 +18,6 @@ export default function SentenceCard({
     isRecording,
     startRecording,
     stopRecording,
-    resetRecording,
   } = useRecorder();
 
   const [audioBlob, setAudioBlob] = useState(null);
@@ -57,12 +56,6 @@ export default function SentenceCard({
       setAudioBlob(blob);
       setAudioUrl(URL.createObjectURL(blob));
     }
-  };
-
-  const handleReset = () => {
-    resetRecording();
-    setAudioBlob(null);
-    setAudioUrl(null);
   };
 
   // 🎙 Submit recording
@@ -142,12 +135,6 @@ export default function SentenceCard({
           <div className="space-y-2">
             <audio controls src={audioUrl} />
             <div className="space-x-2">
-              <button
-                onClick={handleReset}
-                className="px-3 py-1 border rounded"
-              >
-                Re-record
-              </button>
               <button
                 onClick={submit}
                 className="px-3 py-1 bg-green-600 text-white rounded"

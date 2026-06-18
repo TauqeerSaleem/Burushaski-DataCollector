@@ -58,6 +58,7 @@ export function draftToSignupPayload(draft) {
     otherLanguageCount: draft.numOtherLangs,
     comfortLanguage: draft.comfortLang,
     contactPreference: draft.contactPref,
+    email: draft.email,
     mobileNumber: draft.mobile,
     placeOfBirth: formatPlace(draft.birthplace),
     placesLived: (draft.placesLived || []).map(formatPlace).filter(Boolean),

@@ -25,7 +25,7 @@ export default function Stats() {
       const uploaded = {};
       rows.forEach((r) => {
         completed[r.moduleId] = (completed[r.moduleId] || 0) + 1;
-        if (r.status === "uploaded") {
+        if (r.status === "uploaded" || r.status === "synced") {
           uploaded[r.moduleId] = (uploaded[r.moduleId] || 0) + 1;
         }
       });

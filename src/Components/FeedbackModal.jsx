@@ -54,11 +54,6 @@ export default function FeedbackModal({
     setIsRecording(false);
   };
 
-  const resetRecording = () => {
-    setAudioBlob(null);
-    setAudioUrl(null);
-  };
-
   // ── Submit ─────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -106,7 +101,8 @@ export default function FeedbackModal({
 
       // Reset
       setCorrectEnglish("");
-      resetRecording();
+      setAudioBlob(null);
+      setAudioUrl(null);
       onClose();
     } catch (err) {
       console.error("Feedback submission error:", err);
@@ -186,17 +182,10 @@ export default function FeedbackModal({
               </div>
             )}
 
-            {/* Playback + re-record */}
+            {/* Playback */}
             {audioUrl && (
               <div className="space-y-2">
                 <audio controls src={audioUrl} className="w-full h-10" />
-                <button
-                  type="button"
-                  onClick={resetRecording}
-                  className="text-xs text-gray-500 underline"
-                >
-                  Re-record
-                </button>
               </div>
             )}
           </div>

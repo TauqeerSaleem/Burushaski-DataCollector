@@ -31,6 +31,8 @@ export default function Signup() {
   const [role, setRole] = useState(USER_ROLES.VOLUNTEER);
 
   const [contactPref, setContactPref] = useState("");
+  const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState("");
   const [mobile, setMobile] = useState("");
   const [mobileError, setMobileError] = useState("");
 
@@ -65,6 +67,7 @@ export default function Signup() {
   }
 
   const validateUsername = (val) => /^[a-zA-Z0-9._-]{3,32}$/.test(val);
+  const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
   const validateMobile = (val) => /^03\d{2}-?\d{7}$/.test(val.replace(/\s/g, ""));
   const validateNumber = (val) => /^\d+$/.test(val);
   const validateCityName = (val) => /^[A-Za-z\s'.-]{2,}$/.test(val.trim());
@@ -86,6 +89,16 @@ export default function Signup() {
       setMobileError("Enter a valid mobile number (e.g. 03XX-XXXXXXX)");
     } else {
       setMobileError("");
+    }
+  };
+
+  const handleEmailChange = (e) => {
+    const value = e.target.value;
+    setEmail(value);
+    if (value && !validateEmail(value)) {
+      setEmailError("Enter a valid email address");
+    } else {
+      setEmailError("");
     }
   };
 
@@ -163,6 +176,7 @@ export default function Signup() {
     validateUsername(username) &&
     role &&
     contactPref &&
+    (contactPref !== "email" || (email && validateEmail(email))) &&
     (contactPref !== "mobile" || (mobile && validateMobile(mobile))) &&
     ageGroup &&
     gender &&
@@ -185,6 +199,7 @@ export default function Signup() {
       role,
       ageGroup,
       contactPref,
+      email,
       mobile,
       dialects,
       otherDialect,
@@ -298,6 +313,10 @@ export default function Signup() {
                     setMobile("");
                     setMobileError("");
                   }
+                  if (e.target.value !== "email") {
+                    setEmail("");
+                    setEmailError("");
+                  }
                 }}
               >
                 <option value="">Select an option</option>
@@ -305,6 +324,26 @@ export default function Signup() {
                 <option value="mobile">Via Mobile Number</option>
               </select>
             </div>
+
+            {/* Email address */}
+            {contactPref === "email" && (
+              <div className="space-y-1">
+                <label className="text-xs text-gray-400">Email Address *</label>
+                <input
+                  type="email"
+                  className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
+                    emailError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
+                  }`}
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={handleEmailChange}
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                />
+                {emailError && <p className="text-xs text-red-400">{emailError}</p>}
+              </div>
+            )}
 
             {/* Mobile number */}
             {contactPref === "mobile" && (

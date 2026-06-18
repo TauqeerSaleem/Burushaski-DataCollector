@@ -1,10 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
-import { supabase } from "../utils/supabase";
 import { buildPool, weightedRandomPick } from "../utils/randomizer";
 import { useRecorder } from "../hooks/useRecorder";
 import { uploadRecording } from "../utils/uploadRecording";
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://localhost:3001" : "");
 
 export default function Dashboard() {
   const { user, setUser } = useUser();
@@ -32,34 +35,26 @@ export default function Dashboard() {
       setLoading(true);
       setError("");
 
-      const [
-        { data: sentences, error: sErr },
-        { data: myRecordings, error: rErr },
-        { data: allRecordings, error: gErr },
-      ] = await Promise.all([
-        supabase.from("prompt_bank").select("*").eq("active", true),
-        supabase
-          .from("recordings")
-          .select("sentence_id")
-          .eq("participant_id", user.participantId),
-        supabase.from("recordings").select("sentence_id"),
-      ]);
+      try {
+        const params = new URLSearchParams({
+          dialect: user.dialect || "",
+          participantId: user.participantId || "",
+        });
+        const response = await fetch(`${API_BASE_URL}/api/volunteer-dashboard?${params}`);
+        const data = await response.json().catch(() => ({}));
 
-      if (sErr || rErr || gErr) {
-        setError((sErr || rErr || gErr).message);
+        if (!response.ok) {
+          throw new Error(data.error || "Could not load recording prompts.");
+        }
+
+        setAllSentences(data.prompts || []);
+        setRecordedIds(data.recordedIds || []);
+        setGlobalCounts(data.globalCounts || {});
+      } catch (err) {
+        setError(err.message || "Could not load recording prompts.");
+      } finally {
         setLoading(false);
-        return;
       }
-
-      const counts = {};
-      (allRecordings || []).forEach((r) => {
-        counts[r.sentence_id] = (counts[r.sentence_id] || 0) + 1;
-      });
-
-      setAllSentences(sentences || []);
-      setRecordedIds((myRecordings || []).map((r) => r.sentence_id));
-      setGlobalCounts(counts);
-      setLoading(false);
     };
 
     load();
@@ -123,10 +118,6 @@ export default function Dashboard() {
     setAudioUrl(url);
   };
 
-  const handleReRecord = () => {
-    clearRecordingState();
-  };
-
   const handleSubmit = async () => {
     if (!audioBlob || !currentCard) return;
 
@@ -170,14 +161,13 @@ export default function Dashboard() {
   }
 
   const totalForDialect = allSentences
-    ? allSentences.filter((s) => s.active && s.dialect === user.dialect).length
+    ? allSentences.filter((s) => s.active && (!s.dialect || s.dialect === user.dialect)).length
     : 0;
   const recordedForDialect = allSentences
     ? allSentences.filter(
-        (s) => s.active && s.dialect === user.dialect && recordedIds.includes(s.prompt_id)
+        (s) => s.active && (!s.dialect || s.dialect === user.dialect) && recordedIds.includes(s.prompt_id)
       ).length
     : 0;
-
   return (
     <div className="safe-top p-4 space-y-4 min-h-screen bg-neutral-950 text-white">
       {/* Header */}
@@ -235,8 +225,17 @@ export default function Dashboard() {
       {!loading && !error && currentCard && (
         <div className="bg-white text-black rounded-3xl shadow-2xl p-10 md:p-14 space-y-8 max-w-2xl mx-auto min-h-[420px] flex flex-col justify-center">
           <div className="text-center space-y-4">
+            {currentCard.media_type === "image" && currentCard.media_url && (
+              <img
+                src={currentCard.media_url}
+                alt=""
+                className="mx-auto max-h-64 w-full rounded-2xl object-contain bg-gray-100"
+              />
+            )}
             <p className="text-base text-gray-500 italic">{currentCard.english}</p>
-            <p className="text-3xl md:text-4xl font-bold leading-snug">{currentCard.transliteration}</p>
+            {currentCard.transliteration && (
+              <p className="text-3xl md:text-4xl font-bold leading-snug">{currentCard.transliteration}</p>
+            )}
           </div>
 
           {uploadError && (
@@ -271,23 +270,16 @@ export default function Dashboard() {
             </button>
           )}
 
-          {/* Step 3: recorded, reviewing — show playback + Re-record/Submit */}
+          {/* Step 3: recorded, reviewing — show playback + Submit */}
           {audioBlob && !isRecording && (
             <div className="space-y-4">
               <audio src={audioUrl} controls className="w-full" />
 
               <div className="flex gap-3">
                 <button
-                  onClick={handleReRecord}
-                  disabled={uploading}
-                  className="flex-1 bg-gray-200 text-gray-700 py-4 rounded-xl font-semibold hover:bg-gray-300 disabled:opacity-50"
-                >
-                  Re-record
-                </button>
-                <button
                   onClick={handleSubmit}
                   disabled={uploading}
-                  className="flex-1 bg-yellow-400 text-black py-4 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
+                  className="w-full bg-yellow-400 text-black py-4 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
                 >
                   {uploading ? "Submitting…" : "Submit"}
                 </button>

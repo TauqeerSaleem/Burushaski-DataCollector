@@ -80,6 +80,16 @@ export default function Login() {
           Sign up
         </Link>
       </p>
+
+      <div className="border-t border-neutral-800 pt-4">
+        <button
+          type="button"
+          onClick={() => navigate("/admin/login")}
+          className="w-full rounded-lg border border-neutral-700 bg-neutral-900 py-2 text-sm font-semibold text-white hover:border-yellow-400 hover:text-yellow-300"
+        >
+          Login as Admin
+        </button>
+      </div>
     </AuthCard>
   );
 }

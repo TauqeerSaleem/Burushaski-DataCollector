@@ -7,12 +7,13 @@ const ADMIN_KEY = "burushaski_admin";
 
 async function request(path, options = {}) {
   const token = getAdminToken();
+  const headers = {
+    ...(options.body instanceof Blob ? {} : { "Content-Type": "application/json" }),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
+    headers,
     ...options,
   });
 
@@ -98,6 +99,36 @@ export async function fetchAdminData() {
   return request("/api/admin/data");
 }
 
+export async function fetchAdminRecords(page = 1, pageSize = 50) {
+  return request(`/api/admin/records?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`);
+}
+
+export async function exportAdminData(type) {
+  const token = getAdminToken();
+  const response = await fetch(`${API_BASE_URL}/api/admin/export/${encodeURIComponent(type)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Admin export failed");
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const fileName = disposition.match(/filename="([^"]+)"/)?.[1] || `project-yaaran-${type}.csv`;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function fetchAdminPrompts() {
   const data = await request("/api/admin/prompts");
   return data.prompts || [];
@@ -127,6 +158,19 @@ export async function deactivatePrompt(id) {
   });
 
   return data?.prompt || null;
+}
+
+export async function uploadPromptMedia(file) {
+  const data = await request("/api/admin/prompt-media", {
+    method: "POST",
+    headers: {
+      "Content-Type": file.type,
+      "X-File-Name": file.name,
+    },
+    body: file,
+  });
+
+  return data.publicUrl;
 }
 
 export async function fetchResearchTasks() {

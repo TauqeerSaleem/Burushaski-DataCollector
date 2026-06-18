@@ -9,6 +9,7 @@ create table if not exists public.app_users (
     check (role in ('volunteer', 'content_contributor', 'researcher', 'admin')),
   display_name text,
   contact_preference text,
+  email text,
   mobile_number text,
   dialect text,
   dialects text[] not null default '{}',
@@ -27,6 +28,7 @@ create table if not exists public.app_users (
 );
 
 alter table public.app_users add column if not exists contact_preference text;
+alter table public.app_users add column if not exists email text;
 alter table public.app_users add column if not exists mobile_number text;
 alter table public.app_users add column if not exists display_name text;
 alter table public.app_users add column if not exists dialect text;

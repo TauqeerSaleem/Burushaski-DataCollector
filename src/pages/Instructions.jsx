@@ -128,10 +128,10 @@ export default function Instructions() {
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
               <span className="bg-yellow-400 text-black rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">4</span>
-              Playback & Review
+              Playback
             </h2>
             <p className="text-gray-700 pl-10">
-              Listen to your recording. If not satisfied, click <span className="font-semibold">Re-record</span>.
+              Listen once to confirm your recording was captured. Each prompt can only be recorded once.
             </p>
           </div>
 

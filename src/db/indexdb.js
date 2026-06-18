@@ -11,5 +11,5 @@ db.version(1).stores({
 /**
  * status:
  * - "pending"  -> recorded offline, not uploaded
- * - "uploaded" -> successfully uploaded
+ * - "synced"   -> successfully uploaded
  */

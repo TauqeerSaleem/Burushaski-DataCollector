@@ -1,4 +1,6 @@
-import { supabase } from "./supabase";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://localhost:3001" : "");
 
 export async function uploadRecording({
   blob,
@@ -8,37 +10,23 @@ export async function uploadRecording({
   moduleId,
   sentenceId,
 }) {
-  // 1️⃣ Path in Supabase Storage
-  const filePath = `${dialect}/${participantId}/${moduleId}/${sentenceId}.webm`;
+  const response = await fetch(`${API_BASE_URL}/api/recordings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": blob.type || "audio/webm",
+      "X-Participant-Id": participantId,
+      "X-Dialect": dialect || "",
+      "X-Gender": gender || "",
+      "X-Module-Id": moduleId,
+      "X-Sentence-Id": sentenceId,
+    },
+    body: blob,
+  });
+  const data = await response.json().catch(() => ({}));
 
-  // 2️⃣ Upload audio file
-  const { error: uploadError } = await supabase.storage
-    .from("audio-recordings")
-    .upload(filePath, blob, { upsert: true });
-
-  if (uploadError) {
-    console.error("Audio upload failed:", uploadError);
-    throw uploadError;
+  if (!response.ok) {
+    throw new Error(data.error || "Audio upload failed.");
   }
 
-  // 3️⃣ Insert metadata row
-  const { error: dbError } = await supabase
-    .from("recordings")
-    .insert({
-      participant_id: participantId,
-      dialect,
-      gender,
-      module_id: moduleId,
-      sentence_id: sentenceId,
-      audio_path: filePath,
-    });
-
-  if (dbError) {
-    console.error("DB insert failed:", dbError);
-    throw dbError;
-  }
-  if (uploadError) {
-    console.error("Audio upload failed (full):", JSON.stringify(uploadError, null, 2));
-    throw uploadError;
-}
+  return data.recording;
 }
