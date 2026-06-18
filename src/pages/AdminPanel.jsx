@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import {
   clearAdminSession,
@@ -1193,7 +1193,17 @@ function ContentCreatorTab({ users, recordsPage }) {
   );
 }
 
-function DataTab({ recordsPage, correctionsData, users, prompts, onRecordsPage, onCorrectionsLoad, onApproveCorrection }) {
+function DataTab({
+  recordsPage,
+  correctionsData,
+  users,
+  prompts,
+  recordsLoading,
+  correctionsLoading,
+  onRecordsPage,
+  onCorrectionsLoad,
+  onApproveCorrection,
+}) {
   const [activeView, setActiveView] = useState("records");
   const [filters, setFilters] = useState({ search: "", moduleId: "all", participantId: "all" });
   const [correctionFilters, setCorrectionFilters] = useState({ search: "", participantId: "all", moduleId: "all", promptId: "all" });
@@ -1224,16 +1234,16 @@ function DataTab({ recordsPage, correctionsData, users, prompts, onRecordsPage, 
     }));
   };
 
-  const applyRecordFilters = (page = 1) => {
-    onRecordsPage(page, {
+  const applyRecordFilters = async (page = 1) => {
+    await onRecordsPage(page, {
       search: filters.search,
       moduleId: filters.moduleId,
       participantId: filters.participantId,
     });
   };
 
-  const applyCorrectionFilters = () => {
-    onCorrectionsLoad({
+  const applyCorrectionFilters = async () => {
+    await onCorrectionsLoad({
       search: correctionFilters.search,
       participantId: correctionFilters.participantId,
       moduleId: correctionFilters.moduleId,
@@ -1314,10 +1324,20 @@ function DataTab({ recordsPage, correctionsData, users, prompts, onRecordsPage, 
               </select>
             </label>
             <div className="flex items-end gap-2 md:col-span-4">
-              <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" onClick={() => applyRecordFilters(1)}>
-                Apply filters
+              <button
+                type="button"
+                className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={recordsLoading}
+                onClick={() => applyRecordFilters(1)}
+              >
+                {recordsLoading ? "Applying..." : "Apply filters"}
               </button>
-              <button className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700" onClick={clearRecordFilters}>
+              <button
+                type="button"
+                className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={recordsLoading}
+                onClick={clearRecordFilters}
+              >
                 Clear
               </button>
             </div>
@@ -1329,6 +1349,9 @@ function DataTab({ recordsPage, correctionsData, users, prompts, onRecordsPage, 
               { key: "moduleTitle", label: "Group", sortable: true, render: (recording) => recording.moduleTitle || recording.moduleId },
               { key: "sentenceId", label: "Prompt", sortable: true },
               { key: "promptEnglish", label: "Prompt text", sortable: true, render: (recording) => <span className="block max-w-md">{recording.promptEnglish || "-"}</span> },
+              { key: "transcript", label: "Transcript", sortable: true, render: (recording) => <span className="block max-w-md">{recording.transcript || "-"}</span> },
+              { key: "englishTranslation", label: "Translation", sortable: true, render: (recording) => <span className="block max-w-md">{recording.englishTranslation || "-"}</span> },
+              { key: "suggestedCorrection", label: "Correction", sortable: true, render: (recording) => recording.correctionFlag ? <span className="block max-w-md text-yellow-200">{recording.suggestedCorrection || "Flagged"}</span> : "-" },
               {
                 key: "audioPath",
                 label: "Audio",
@@ -1357,14 +1380,14 @@ function DataTab({ recordsPage, correctionsData, users, prompts, onRecordsPage, 
             <div className="flex gap-2">
               <button
                 className="rounded bg-neutral-800 px-3 py-2 text-sm text-white hover:bg-neutral-700 disabled:opacity-40"
-                disabled={(recordsPage.page || 1) <= 1}
+                disabled={recordsLoading || (recordsPage.page || 1) <= 1}
                 onClick={() => applyRecordFilters((recordsPage.page || 1) - 1)}
               >
                 Previous
               </button>
               <button
                 className="rounded bg-neutral-800 px-3 py-2 text-sm text-white hover:bg-neutral-700 disabled:opacity-40"
-                disabled={(recordsPage.page || 1) >= (recordsPage.totalPages || 1)}
+                disabled={recordsLoading || (recordsPage.page || 1) >= (recordsPage.totalPages || 1)}
                 onClick={() => applyRecordFilters((recordsPage.page || 1) + 1)}
               >
                 Next
@@ -1407,10 +1430,20 @@ function DataTab({ recordsPage, correctionsData, users, prompts, onRecordsPage, 
               </select>
             </label>
             <div className="flex items-end gap-2 md:col-span-4">
-              <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" onClick={applyCorrectionFilters}>
-                Apply filters
+              <button
+                type="button"
+                className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={correctionsLoading}
+                onClick={applyCorrectionFilters}
+              >
+                {correctionsLoading ? "Applying..." : "Apply filters"}
               </button>
-              <button className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700" onClick={clearCorrectionFilters}>
+              <button
+                type="button"
+                className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={correctionsLoading}
+                onClick={clearCorrectionFilters}
+              >
                 Clear
               </button>
             </div>
@@ -1640,7 +1673,11 @@ export default function AdminPanel() {
   const [researchTasks, setResearchTasks] = useState([]);
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [correctionsLoading, setCorrectionsLoading] = useState(false);
   const [error, setError] = useState("");
+  const recordsRequestId = useRef(0);
+  const correctionsRequestId = useRef(0);
   const navigate = useNavigate();
 
   const token = getAdminToken();
@@ -1686,20 +1723,38 @@ export default function AdminPanel() {
   }, [load, token]);
 
   const loadRecordsPage = useCallback(async (page, filters = {}) => {
+    const requestId = recordsRequestId.current + 1;
+    recordsRequestId.current = requestId;
+    setRecordsLoading(true);
     try {
       const recordsData = await fetchAdminRecords(page, recordsPage.pageSize || 50, filters);
-      setRecordsPage(recordsData);
+      if (recordsRequestId.current === requestId) {
+        setRecordsPage(recordsData);
+      }
     } catch (err) {
       setError(err.message || "Unable to load recording records.");
+    } finally {
+      if (recordsRequestId.current === requestId) {
+        setRecordsLoading(false);
+      }
     }
   }, [recordsPage.pageSize]);
 
   const loadCorrections = useCallback(async (filters = {}) => {
+    const requestId = correctionsRequestId.current + 1;
+    correctionsRequestId.current = requestId;
+    setCorrectionsLoading(true);
     try {
       const correctionsResult = await fetchAdminCorrections(filters);
-      setCorrectionsData(correctionsResult);
+      if (correctionsRequestId.current === requestId) {
+        setCorrectionsData(correctionsResult);
+      }
     } catch (err) {
       setError(err.message || "Unable to load corrections.");
+    } finally {
+      if (correctionsRequestId.current === requestId) {
+        setCorrectionsLoading(false);
+      }
     }
   }, []);
 
@@ -1728,6 +1783,8 @@ export default function AdminPanel() {
           prompts={prompts}
           recordsPage={recordsPage}
           correctionsData={correctionsData}
+          recordsLoading={recordsLoading}
+          correctionsLoading={correctionsLoading}
           onRecordsPage={loadRecordsPage}
           onCorrectionsLoad={loadCorrections}
           onApproveCorrection={approveCorrection}
@@ -1736,7 +1793,7 @@ export default function AdminPanel() {
     }
     if (activeTab === "admins") return <AdminsTab admins={admins} currentAdmin={admin} onRefresh={load} />;
     return <OverviewTab overview={overview} prompts={prompts} />;
-  }, [activeTab, admin, overview, users, data, recordsPage, correctionsData, prompts, researchTasks, admins, load, loadRecordsPage, loadCorrections, approveCorrection]);
+  }, [activeTab, admin, overview, users, data, recordsPage, correctionsData, prompts, researchTasks, admins, recordsLoading, correctionsLoading, load, loadRecordsPage, loadCorrections, approveCorrection]);
 
   if (!token) return <Navigate to="/admin/login" replace />;
 

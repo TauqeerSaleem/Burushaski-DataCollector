@@ -4,6 +4,10 @@ import { useSentences } from "../hooks/useSentences";
 import { db } from "../db/indexdb";
 import { useUser } from "../context/UserContext";
 
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://localhost:3001" : "");
+
 export default function Stats() {
   const data = useSentences();
   const { user } = useUser();
@@ -17,14 +21,48 @@ export default function Stats() {
     if (!data || !user) return;
 
     const load = async () => {
+      setLoaded(false);
       const rows = await db.recordings
         .where({ participantId: user.participantId })
         .toArray();
 
       const completed = {};
       const uploaded = {};
+      const serverRecordedIds = new Set();
+      const moduleByPrompt = new Map();
+      data.modules.forEach((module) => {
+        module.sentences.forEach((sentence) => {
+          moduleByPrompt.set(sentence.sentenceId || sentence.prompt_id, module.moduleId);
+        });
+      });
+
+      try {
+        const params = new URLSearchParams({
+          dialect: user.dialect || "",
+          participantId: user.participantId || "",
+        });
+        const response = await fetch(`${API_BASE_URL}/api/volunteer-dashboard?${params}`);
+        const dashboard = await response.json().catch(() => ({}));
+
+        if (response.ok) {
+          (dashboard.recordedIds || []).forEach((promptId) => {
+            const moduleId = moduleByPrompt.get(promptId);
+            if (!moduleId) return;
+            serverRecordedIds.add(promptId);
+            completed[moduleId] = (completed[moduleId] || 0) + 1;
+            uploaded[moduleId] = (uploaded[moduleId] || 0) + 1;
+          });
+        }
+      } catch (error) {
+        console.info("Using local stats only:", error.message);
+      }
+
       rows.forEach((r) => {
-        completed[r.moduleId] = (completed[r.moduleId] || 0) + 1;
+        if (serverRecordedIds.has(r.sentenceId)) return;
+
+        if (!(r.status === "uploaded" || r.status === "synced")) {
+          completed[r.moduleId] = (completed[r.moduleId] || 0) + 1;
+        }
         if (r.status === "uploaded" || r.status === "synced") {
           uploaded[r.moduleId] = (uploaded[r.moduleId] || 0) + 1;
         }

@@ -9,7 +9,17 @@ export async function uploadRecording({
   gender,
   moduleId,
   sentenceId,
+  transcript,
+  englishTranslation,
+  correctionFlag,
+  suggestedCorrection,
 }) {
+  const optionalHeaders = {};
+  if (transcript?.trim()) optionalHeaders["X-Transcript"] = encodeURIComponent(transcript.trim());
+  if (englishTranslation?.trim()) optionalHeaders["X-English-Translation"] = encodeURIComponent(englishTranslation.trim());
+  if (correctionFlag) optionalHeaders["X-Correction-Flag"] = "true";
+  if (suggestedCorrection?.trim()) optionalHeaders["X-Suggested-Correction"] = encodeURIComponent(suggestedCorrection.trim());
+
   const response = await fetch(`${API_BASE_URL}/api/recordings`, {
     method: "POST",
     headers: {
@@ -19,6 +29,7 @@ export async function uploadRecording({
       "X-Gender": gender || "",
       "X-Module-Id": moduleId,
       "X-Sentence-Id": sentenceId,
+      ...optionalHeaders,
     },
     body: blob,
   });

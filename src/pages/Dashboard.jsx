@@ -26,6 +26,10 @@ export default function Dashboard() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [showSuccess, setShowSuccess] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [englishTranslation, setEnglishTranslation] = useState("");
+  const [correctionFlag, setCorrectionFlag] = useState(false);
+  const [suggestedCorrection, setSuggestedCorrection] = useState("");
   const audioUrlRef = useRef(null);
 
   useEffect(() => {
@@ -91,6 +95,10 @@ export default function Dashboard() {
     setAudioBlob(null);
     setAudioUrl(null);
     setUploadError("");
+    setTranscript("");
+    setEnglishTranslation("");
+    setCorrectionFlag(false);
+    setSuggestedCorrection("");
     resetRecording();
   };
 
@@ -119,7 +127,11 @@ export default function Dashboard() {
   };
 
   const handleSubmit = async () => {
-    if (!audioBlob || !currentCard) return;
+    if (!audioBlob || !currentCard || uploading) return;
+    if (correctionFlag && !suggestedCorrection.trim()) {
+      setUploadError("Add the corrected English translation, or uncheck the correction box.");
+      return;
+    }
 
     setUploading(true);
     setUploadError("");
@@ -132,6 +144,10 @@ export default function Dashboard() {
         gender: user.gender,
         moduleId: currentCard.module_id,
         sentenceId: currentCard.prompt_id,
+        transcript,
+        englishTranslation: currentCard.prompt_type === "picture_description" ? englishTranslation : "",
+        correctionFlag,
+        suggestedCorrection,
       });
 
       setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
@@ -275,10 +291,70 @@ export default function Dashboard() {
             <div className="space-y-4">
               <audio src={audioUrl} controls className="w-full" />
 
+              <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
+                <summary className="cursor-pointer text-sm font-semibold text-gray-700">
+                  Add optional transcript or correction
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <label className="block space-y-1">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      What you said
+                    </span>
+                    <textarea
+                      className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                      rows={2}
+                      value={transcript}
+                      onChange={(event) => setTranscript(event.target.value)}
+                      placeholder="Optional Burushaski transcript"
+                    />
+                  </label>
+
+                  {currentCard.prompt_type === "picture_description" && (
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        English meaning
+                      </span>
+                      <textarea
+                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                        rows={2}
+                        value={englishTranslation}
+                        onChange={(event) => setEnglishTranslation(event.target.value)}
+                        placeholder="Optional English translation"
+                      />
+                    </label>
+                  )}
+
+                  <label className="flex items-start gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={correctionFlag}
+                      onChange={(event) => setCorrectionFlag(event.target.checked)}
+                    />
+                    <span>The suggested English is not how I would naturally or correctly say it.</span>
+                  </label>
+
+                  {correctionFlag && (
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Better English translation
+                      </span>
+                      <textarea
+                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                        rows={2}
+                        value={suggestedCorrection}
+                        onChange={(event) => setSuggestedCorrection(event.target.value)}
+                        placeholder="Write the better translation"
+                      />
+                    </label>
+                  )}
+                </div>
+              </details>
+
               <div className="flex gap-3">
                 <button
                   onClick={handleSubmit}
-                  disabled={uploading}
+                  disabled={uploading || (correctionFlag && !suggestedCorrection.trim())}
                   className="w-full bg-yellow-400 text-black py-4 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
                 >
                   {uploading ? "Submitting…" : "Submit"}

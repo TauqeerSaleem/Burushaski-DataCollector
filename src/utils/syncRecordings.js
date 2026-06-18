@@ -24,6 +24,10 @@ export async function syncPendingRecordings(user) {
         gender: user.gender,
         moduleId: rec.moduleId,
         sentenceId: rec.sentenceId,
+        transcript: rec.transcript,
+        englishTranslation: rec.englishTranslation,
+        correctionFlag: rec.correctionFlag,
+        suggestedCorrection: rec.suggestedCorrection,
       });
 
       await db.recordings.update(rec.id, {

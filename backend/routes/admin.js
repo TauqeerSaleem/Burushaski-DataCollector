@@ -100,6 +100,15 @@ function cleanEncodedHeader(value) {
   }
 }
 
+function cleanHeaderText(value, maxLength = 2000) {
+  const text = cleanEncodedHeader(value);
+  return text ? text.slice(0, maxLength) : null;
+}
+
+function cleanBooleanHeader(value) {
+  return ["1", "true", "yes"].includes(String(value || "").trim().toLowerCase());
+}
+
 function cleanFileName(value) {
   return String(value || "prompt-image")
     .trim()
@@ -403,6 +412,10 @@ function recordingToClient(row) {
     promptType: row.prompt_type || "",
     promptDialect: row.prompt_dialect || "",
     moduleTitle: row.prompt_module_title || "",
+    transcript: row.transcript || "",
+    englishTranslation: row.english_translation || "",
+    correctionFlag: Boolean(row.correction_flag),
+    suggestedCorrection: row.suggested_correction || "",
   };
 }
 
@@ -588,7 +601,7 @@ router.get("/volunteer-dashboard", async (req, res) => {
       return res.status(400).json({ error: "Dialect and participant ID are required." });
     }
 
-    const [promptsResult, myRecordingsResult, countsResult] = await Promise.all([
+    const [promptsResult, myRecordingsResult, allRecordingsResult] = await Promise.all([
       supabase
         .from("prompt_bank")
         .select("*")
@@ -601,25 +614,29 @@ router.get("/volunteer-dashboard", async (req, res) => {
         .select("sentence_id")
         .eq("participant_id", participantId),
       supabase
-        .from("prompt_recording_counts")
-        .select("prompt_id, recording_count"),
+        .from("recordings")
+        .select("sentence_id"),
     ]);
 
-    const error = [promptsResult, myRecordingsResult, countsResult]
+    const error = [promptsResult, myRecordingsResult, allRecordingsResult]
       .map((result) => result.error)
       .find(Boolean);
 
     if (error) throw error;
 
     const globalCounts = {};
-    (countsResult.data || []).forEach((count) => {
-      globalCounts[count.prompt_id] = count.recording_count || 0;
+    (allRecordingsResult.data || []).forEach((recording) => {
+      globalCounts[recording.sentence_id] = (globalCounts[recording.sentence_id] || 0) + 1;
     });
 
     const signedPrompts = await signPromptRows(promptsResult.data || []);
 
     res.json({
-      prompts: signedPrompts,
+      prompts: signedPrompts.map((prompt) => ({
+        ...prompt,
+        media_path: prompt.media_path || promptMediaStoragePath(prompt.media_url) || prompt.media_url || "",
+        media_url: prompt.signed_media_url || prompt.media_url || "",
+      })),
       recordedIds: (myRecordingsResult.data || []).map((recording) => recording.sentence_id),
       globalCounts,
     });
@@ -650,6 +667,10 @@ router.post(
       const gender = cleanText(req.get("x-gender"));
       const moduleId = cleanText(req.get("x-module-id"));
       const sentenceId = cleanText(req.get("x-sentence-id"));
+      const transcript = cleanHeaderText(req.get("x-transcript"));
+      const englishTranslation = cleanHeaderText(req.get("x-english-translation"));
+      const suggestedCorrection = cleanHeaderText(req.get("x-suggested-correction"));
+      const correctionFlag = cleanBooleanHeader(req.get("x-correction-flag"));
 
       if (!participantId || !moduleId || !sentenceId) {
         return res.status(400).json({ error: "Participant, module, and prompt IDs are required." });
@@ -691,6 +712,10 @@ router.post(
           module_id: moduleId,
           sentence_id: sentenceId,
           audio_path: filePath,
+          transcript,
+          english_translation: englishTranslation,
+          correction_flag: correctionFlag,
+          suggested_correction: suggestedCorrection,
         })
         .select("*")
         .single();
@@ -698,6 +723,21 @@ router.post(
       if (dbError) {
         await supabase.storage.from("audio-recordings").remove([filePath]);
         throw dbError;
+      }
+
+      if (correctionFlag && suggestedCorrection) {
+        const { error: feedbackError } = await supabase.from("feedback").insert({
+          participant_id: participantId,
+          module_id: moduleId,
+          sentence_id: sentenceId,
+          correct_english: suggestedCorrection,
+          correction: suggestedCorrection,
+          audio_url: filePath,
+        });
+
+        if (feedbackError) {
+          console.error("Recording correction insert failed:", feedbackError.message);
+        }
       }
 
       res.status(201).json({ recording: recordingToClient(data) });
@@ -1327,6 +1367,9 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
         `module_id.ilike.%${search}%`,
         `sentence_id.ilike.%${search}%`,
         `audio_path.ilike.%${search}%`,
+        `transcript.ilike.%${search}%`,
+        `english_translation.ilike.%${search}%`,
+        `suggested_correction.ilike.%${search}%`,
         ...promptSearchIds.map((promptId) => `sentence_id.eq.${promptId}`),
       ];
       query = query.or(searchClauses.join(","));
@@ -1428,6 +1471,10 @@ router.get("/admin/export/:type", requireAdmin, async (req, res) => {
         { label: "prompt_transliteration", value: (row) => row.prompt.transliteration },
         { label: "prompt_media_type", value: (row) => row.prompt.media_type },
         { label: "prompt_media_url", value: (row) => row.prompt.media_url },
+        { label: "transcript", value: "transcript" },
+        { label: "english_translation", value: "english_translation" },
+        { label: "correction_flag", value: "correction_flag" },
+        { label: "suggested_correction", value: "suggested_correction" },
         { label: "audio_path", value: "audio_path" },
         { label: "created_at", value: "created_at" },
       ]);

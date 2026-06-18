@@ -1,5 +1,17 @@
 -- Apply after an older deploy_schema.sql run to make prompt media private
--- and lock down count views. This is safe to rerun.
+-- lock down count views, and add recording note columns. This is safe to rerun.
+
+alter table public.recordings
+add column if not exists transcript text;
+
+alter table public.recordings
+add column if not exists english_translation text;
+
+alter table public.recordings
+add column if not exists correction_flag boolean not null default false;
+
+alter table public.recordings
+add column if not exists suggested_correction text;
 
 create or replace view public.prompt_recording_counts
 with (security_invoker = true)

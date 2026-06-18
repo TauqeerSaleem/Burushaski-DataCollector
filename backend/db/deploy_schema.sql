@@ -39,6 +39,10 @@ create table if not exists public.recordings (
   module_id text not null,
   sentence_id text not null,
   audio_path text not null,
+  transcript text,
+  english_translation text,
+  correction_flag boolean not null default false,
+  suggested_correction text,
   created_at timestamptz not null default now()
 );
 
@@ -171,6 +175,18 @@ add column if not exists email text;
 
 alter table public.prompt_bank
 add column if not exists media_type text not null default 'none';
+
+alter table public.recordings
+add column if not exists transcript text;
+
+alter table public.recordings
+add column if not exists english_translation text;
+
+alter table public.recordings
+add column if not exists correction_flag boolean not null default false;
+
+alter table public.recordings
+add column if not exists suggested_correction text;
 
 do $$
 begin
