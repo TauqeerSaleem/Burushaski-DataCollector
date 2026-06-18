@@ -24,6 +24,7 @@ const MAX_DATA_PAGE_SIZE = 200;
 const EXPORT_LIMIT = 50000;
 const MAX_PROMPT_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_RECORDING_BYTES = 30 * 1024 * 1024;
+const PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
 const ALLOWED_PROMPT_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const ALLOWED_RECORDING_TYPES = new Set([
   "audio/webm",
@@ -105,6 +106,62 @@ function cleanFileName(value) {
     .replace(/[^a-zA-Z0-9._-]/g, "-")
     .replace(/-+/g, "-")
     .slice(0, 80) || "prompt-image";
+}
+
+function isHttpUrl(value) {
+  return /^https?:\/\//i.test(String(value || ""));
+}
+
+function promptMediaStoragePath(value) {
+  const media = cleanText(value);
+  if (!media) return "";
+
+  const markers = [
+    "/storage/v1/object/public/prompt-media/",
+    "/storage/v1/object/sign/prompt-media/",
+  ];
+  const marker = markers.find((candidate) => media.includes(candidate));
+  if (marker) {
+    return decodeURIComponent(media.slice(media.indexOf(marker) + marker.length).split("?")[0]);
+  }
+
+  return isHttpUrl(media) ? "" : media;
+}
+
+async function signedPromptMediaUrl(value) {
+  const media = cleanText(value);
+  if (!media) return "";
+
+  const path = promptMediaStoragePath(media);
+  if (!path) return media;
+
+  const { data, error } = await supabase.storage
+    .from("prompt-media")
+    .createSignedUrl(path, PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS);
+
+  if (error) {
+    console.error("Prompt media signing failed:", error.message);
+    return "";
+  }
+
+  return data?.signedUrl || "";
+}
+
+async function signPromptRows(rows) {
+  return Promise.all(
+    (rows || []).map(async (row) => {
+      if (row.media_type !== "image" || !row.media_url) return row;
+
+      const mediaPath = promptMediaStoragePath(row.media_url) || row.media_url;
+      const signedUrl = await signedPromptMediaUrl(row.media_url);
+
+      return {
+        ...row,
+        media_path: mediaPath,
+        signed_media_url: signedUrl || row.media_url,
+      };
+    })
+  );
 }
 
 function recordingExtension(contentType) {
@@ -315,7 +372,8 @@ function promptToClient(row) {
     dialect: row.dialect || "",
     english: row.english || "",
     transliteration: row.transliteration || "",
-    mediaUrl: row.media_url || "",
+    mediaUrl: row.signed_media_url || row.media_url || "",
+    mediaPath: row.media_path || promptMediaStoragePath(row.media_url) || row.media_url || "",
     mediaType: row.media_type || "none",
     difficulty: row.difficulty || "short",
     curriculumStage: row.curriculum_stage || "",
@@ -378,7 +436,9 @@ function promptPayload(body, admin) {
     ...(body.dialect !== undefined ? { dialect: cleanText(body.dialect) } : {}),
     ...(body.english !== undefined ? { english } : {}),
     ...(body.transliteration !== undefined ? { transliteration: cleanText(body.transliteration) } : {}),
-    ...(body.mediaUrl !== undefined ? { media_url: cleanText(body.mediaUrl) } : {}),
+    ...(body.mediaUrl !== undefined
+      ? { media_url: promptMediaStoragePath(body.mediaUrl) || cleanText(body.mediaUrl) }
+      : {}),
     ...(body.mediaType !== undefined ? { media_type: cleanText(body.mediaType) || "none" } : {}),
     ...(body.difficulty !== undefined ? { difficulty: cleanText(body.difficulty) || "short" } : {}),
     ...(body.curriculumStage !== undefined ? { curriculum_stage: cleanText(body.curriculumStage) } : {}),
@@ -451,7 +511,8 @@ function promptsToModules(rows) {
       english: row.english,
       transliteration: row.transliteration || row.english,
       promptType: row.prompt_type,
-      mediaUrl: row.media_url || "",
+      mediaUrl: row.signed_media_url || row.media_url || "",
+      mediaPath: row.media_path || promptMediaStoragePath(row.media_url) || row.media_url || "",
       mediaType: row.media_type || "none",
       grammaticalCategory: row.grammatical_category || "",
       weight: row.weight || 1,
@@ -508,7 +569,8 @@ router.get("/prompts", async (req, res) => {
 
     if (error) throw error;
 
-    res.json(promptsToModules(data || []));
+    const signedPrompts = await signPromptRows(data || []);
+    res.json(promptsToModules(signedPrompts));
   } catch (error) {
     console.error("Public prompts failed:", error.message);
     res.status(500).json({ error: "Unable to load prompts." });
@@ -554,8 +616,10 @@ router.get("/volunteer-dashboard", async (req, res) => {
       globalCounts[count.prompt_id] = count.recording_count || 0;
     });
 
+    const signedPrompts = await signPromptRows(promptsResult.data || []);
+
     res.json({
-      prompts: promptsResult.data || [],
+      prompts: signedPrompts,
       recordedIds: (myRecordingsResult.data || []).map((recording) => recording.sentence_id),
       globalCounts,
     });
@@ -1467,10 +1531,14 @@ router.post(
 
       if (uploadError) throw uploadError;
 
-      const { data } = supabase.storage.from("prompt-media").getPublicUrl(path);
+      const { data: signedMedia, error: signedError } = await supabase.storage
+        .from("prompt-media")
+        .createSignedUrl(path, PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS);
+
+      if (signedError) throw signedError;
 
       await writeActivity(req.admin, "upload_prompt_media", "prompt_media", path);
-      res.status(201).json({ path, publicUrl: data.publicUrl });
+      res.status(201).json({ path, signedUrl: signedMedia?.signedUrl || "" });
     } catch (error) {
       console.error("Admin prompt media upload failed:", error.message);
       res.status(500).json({ error: "Unable to upload prompt media." });
@@ -1500,8 +1568,10 @@ router.get("/admin/prompts", requireAdmin, async (req, res) => {
       (countsResult.data || []).map((count) => [`${count.module_id}:${count.prompt_id}`, count.recording_count || 0])
     );
 
+    const signedPrompts = await signPromptRows(promptsResult.data || []);
+
     res.json({
-      prompts: (promptsResult.data || []).map((prompt) =>
+      prompts: signedPrompts.map((prompt) =>
         promptToClient({
           ...prompt,
           recording_count: countMap.get(`${prompt.module_id}:${prompt.prompt_id}`) || 0,
@@ -1545,7 +1615,8 @@ router.post("/admin/prompts", requireAdmin, async (req, res) => {
     if (error) throw error;
 
     await writeActivity(req.admin, "create_prompt", "prompt", data.id, { promptId: data.prompt_id });
-    res.status(201).json({ prompt: promptToClient(data) });
+    const [signedPrompt] = await signPromptRows([data]);
+    res.status(201).json({ prompt: promptToClient(signedPrompt) });
   } catch (error) {
     console.error("Admin prompt create failed:", error.message);
     res.status(500).json({ error: "Unable to create prompt." });
@@ -1578,7 +1649,8 @@ router.patch("/admin/prompts/:id", requireAdmin, async (req, res) => {
     if (!data) return res.status(404).json({ error: "Prompt not found." });
 
     await writeActivity(req.admin, "update_prompt", "prompt", req.params.id);
-    res.json({ prompt: promptToClient(data) });
+    const [signedPrompt] = await signPromptRows([data]);
+    res.json({ prompt: promptToClient(signedPrompt) });
   } catch (error) {
     console.error("Admin prompt update failed:", error.message);
     res.status(500).json({ error: "Unable to update prompt." });
@@ -1600,7 +1672,8 @@ router.delete("/admin/prompts/:id", requireAdmin, async (req, res) => {
     if (!data) return res.status(404).json({ error: "Prompt not found." });
 
     await writeActivity(req.admin, "deactivate_prompt", "prompt", req.params.id);
-    res.json({ prompt: promptToClient(data) });
+    const [signedPrompt] = await signPromptRows([data]);
+    res.json({ prompt: promptToClient(signedPrompt) });
   } catch (error) {
     console.error("Admin prompt deactivate failed:", error.message);
     res.status(500).json({ error: "Unable to deactivate prompt." });

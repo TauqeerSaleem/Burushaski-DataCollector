@@ -220,7 +220,9 @@ on public.prompt_correction_reviews (created_at);
 create index if not exists research_tasks_status_idx on public.research_tasks (status);
 create index if not exists research_tasks_assigned_idx on public.research_tasks (assigned_to);
 
-create or replace view public.prompt_recording_counts as
+create or replace view public.prompt_recording_counts
+with (security_invoker = true)
+as
 select
   module_id,
   sentence_id as prompt_id,
@@ -228,12 +230,19 @@ select
 from public.recordings
 group by module_id, sentence_id;
 
-create or replace view public.participant_recording_counts as
+create or replace view public.participant_recording_counts
+with (security_invoker = true)
+as
 select
   participant_id,
   count(*)::integer as recording_count
 from public.recordings
 group by participant_id;
+
+revoke all on public.prompt_recording_counts from anon, authenticated;
+revoke all on public.participant_recording_counts from anon, authenticated;
+grant select on public.prompt_recording_counts to service_role;
+grant select on public.participant_recording_counts to service_role;
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -281,11 +290,11 @@ insert into storage.buckets (id, name, public)
 values
   ('audio-recordings', 'audio-recordings', false),
   ('feedback-audio', 'feedback-audio', false),
-  ('prompt-media', 'prompt-media', true)
+  ('prompt-media', 'prompt-media', false)
 on conflict (id) do nothing;
 
 update storage.buckets
-set public = true
+set public = false
 where id = 'prompt-media';
 
 alter table public.app_users enable row level security;

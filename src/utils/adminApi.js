@@ -197,7 +197,7 @@ export async function uploadPromptMedia(file) {
     body: file,
   });
 
-  return data.publicUrl;
+  return data;
 }
 
 export async function fetchResearchTasks() {

@@ -120,6 +120,7 @@ const editableUserFields = [
 ];
 
 const normalize = (value) => String(value || "").toLowerCase();
+const isHttpUrl = (value) => /^https?:\/\//i.test(String(value || ""));
 
 function uniq(values) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -440,7 +441,7 @@ function PromptsTab({ prompts, onRefresh }) {
 
   const edit = (prompt) => {
     setEditingId(prompt.id);
-    setForm({ ...emptyPrompt, ...prompt });
+    setForm({ ...emptyPrompt, ...prompt, mediaUrl: prompt.mediaPath || prompt.mediaUrl || "" });
     setGroupMode(prompt.moduleTitle || "Admin Prompts");
     setNewGroupTitle("");
     setError("");
@@ -465,8 +466,8 @@ function PromptsTab({ prompts, onRefresh }) {
     setError("");
     setUploadingMedia(true);
     try {
-      const publicUrl = await uploadPromptMedia(file);
-      setForm({ ...form, mediaType: "image", mediaUrl: publicUrl });
+      const media = await uploadPromptMedia(file);
+      setForm({ ...form, mediaType: "image", mediaUrl: media.path || media.signedUrl || "" });
     } catch (err) {
       setError(err.message || "Unable to upload image.");
     } finally {
@@ -613,7 +614,7 @@ function PromptsTab({ prompts, onRefresh }) {
                 onChange={uploadMedia}
               />
             </label>
-            {form.mediaUrl && (
+            {isHttpUrl(form.mediaUrl) && (
               <a className="text-sm text-yellow-300 underline" href={form.mediaUrl} target="_blank" rel="noreferrer">
                 Open current media
               </a>
