@@ -575,7 +575,7 @@ router.get("/prompts", async (req, res) => {
       .order("created_at", { ascending: true });
 
     if (dialect) {
-      query = query.or(`dialect.is.null,dialect.eq.${dialect}`);
+      query = query.or(`dialect.is.null,dialect.eq.${dialect},dialect.eq.all`);
     }
 
     const { data, error } = await query;

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
-import { buildPool, weightedRandomPick } from "../utils/randomizer";
+import { pickNextPrompt } from "../utils/randomizer";
 import { useRecorder } from "../hooks/useRecorder";
 import { uploadRecording } from "../utils/uploadRecording";
 
@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [recordedIds, setRecordedIds] = useState([]);
   const [globalCounts, setGlobalCounts] = useState({});
   const [currentCard, setCurrentCard] = useState(null);
+  const [pickCount, setPickCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -64,15 +65,16 @@ export default function Dashboard() {
     load();
   }, [user]);
 
-  const pickNextCard = useCallback(() => {
+  const pickNextCard = useCallback((currentPickCount) => {
     if (!allSentences) return;
-    const pool = buildPool(allSentences, recordedIds, globalCounts, user.dialect);
-    setCurrentCard(weightedRandomPick(pool));
+    const next = pickNextPrompt(allSentences, recordedIds, globalCounts, user.dialect, currentPickCount);
+    setCurrentCard(next);
+    setPickCount(currentPickCount + 1);
   }, [allSentences, recordedIds, globalCounts, user]);
 
   useEffect(() => {
-    if (allSentences) pickNextCard();
-  }, [allSentences, recordedIds]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (allSentences) pickNextCard(0);
+  }, [allSentences]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => {
@@ -80,7 +82,6 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Auto-hide success message after a couple seconds
   useEffect(() => {
     if (!showSuccess) return;
     const timer = setTimeout(() => setShowSuccess(false), 2500);
@@ -104,7 +105,7 @@ export default function Dashboard() {
 
   const handleSkip = () => {
     clearRecordingState();
-    pickNextCard();
+    pickNextCard(pickCount);
   };
 
   const handleStartRecording = async () => {
@@ -158,6 +159,7 @@ export default function Dashboard() {
 
       clearRecordingState();
       setShowSuccess(true);
+      pickNextCard(pickCount);
     } catch (err) {
       console.error("Upload failed:", err);
       setUploadError("Upload failed. Please check your connection and try again.");
@@ -176,14 +178,15 @@ export default function Dashboard() {
     return <Navigate to="/" replace />;
   }
 
-  const totalForDialect = allSentences
-    ? allSentences.filter((s) => s.active && (!s.dialect || s.dialect === user.dialect)).length
-    : 0;
-  const recordedForDialect = allSentences
-    ? allSentences.filter(
-        (s) => s.active && (!s.dialect || s.dialect === user.dialect) && recordedIds.includes(s.prompt_id)
-      ).length
-    : 0;
+const totalForDialect = allSentences
+  ? allSentences.filter((s) => s.active && (!s.dialect || s.dialect === user.dialect || s.dialect === "all")).length
+  : 0;
+const recordedForDialect = allSentences
+  ? allSentences.filter(
+      (s) => s.active && (!s.dialect || s.dialect === user.dialect || s.dialect === "all") && recordedIds.includes(s.prompt_id)
+    ).length
+  : 0;
+
   return (
     <div className="safe-top p-4 space-y-4 min-h-screen bg-neutral-950 text-white">
       {/* Header */}
