@@ -356,9 +356,16 @@ const recordedForDialect = allSentences
 
               <div className="flex gap-3">
                 <button
+                  onClick={clearRecordingState}
+                  disabled={uploading}
+                  className="px-6 py-4 rounded-xl font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+                >
+                  ← Back
+                </button>
+                <button
                   onClick={handleSubmit}
                   disabled={uploading || (correctionFlag && !suggestedCorrection.trim())}
-                  className="w-full bg-yellow-400 text-black py-4 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
+                  className="flex-1 bg-yellow-400 text-black py-4 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
                 >
                   {uploading ? "Submitting…" : "Submit"}
                 </button>
