@@ -244,18 +244,38 @@ const recordedForDialect = allSentences
       {!loading && !error && currentCard && (
         <div className="bg-white text-black rounded-3xl shadow-2xl p-10 md:p-14 space-y-8 max-w-2xl mx-auto min-h-[420px] flex flex-col justify-center">
           <div className="text-center space-y-4">
-            {currentCard.media_type === "image" && currentCard.media_url && (
-              <img
-                src={currentCard.media_url}
-                alt=""
-                className="mx-auto max-h-64 w-full rounded-2xl object-contain bg-gray-100"
-              />
-            )}
-            <p className="text-base text-gray-500 italic">{currentCard.english}</p>
-            {currentCard.transliteration && (
-              <p className="text-3xl md:text-4xl font-bold leading-snug">{currentCard.transliteration}</p>
-            )}
-          </div>
+  {currentCard.media_type === "image" && currentCard.media_url && (
+    <img
+      src={currentCard.media_url}
+      alt=""
+      className="mx-auto max-h-64 w-full rounded-2xl object-contain bg-gray-100"
+    />
+  )}
+
+  {currentCard.prompt_type === "picture_description" ? (
+    <p className="font-bold text-2xl leading-relaxed">
+      {currentCard.english}
+    </p>
+  ) : (
+    <>
+      <p className="text-sm text-gray-500">
+        Can you translate this into Burushaski?
+      </p>
+      <p className="font-bold text-3xl leading-relaxed">
+        "{currentCard.english}"
+      </p>
+    </>
+  )}
+
+  {currentCard.transliteration && currentCard.prompt_type !== "picture_description" && (
+    <details className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-center inline-block mx-auto">
+<summary className="cursor-pointer text-xs font-semibold text-gray-500">
+  Show suggested translation
+</summary>
+      <p className="text-sm text-gray-600 italic mt-2">{currentCard.transliteration}</p>
+    </details>
+  )}
+</div>
 
           {uploadError && (
             <p className="text-sm text-red-600 text-center">{uploadError}</p>
