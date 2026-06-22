@@ -606,7 +606,7 @@ router.get("/volunteer-dashboard", async (req, res) => {
         .from("prompt_bank")
         .select("*")
         .eq("active", true)
-        .or(`dialect.is.null,dialect.eq.${dialect}`)
+        .or(`dialect.is.null,dialect.eq.${dialect},dialect.eq.all`)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true }),
       supabase
@@ -1961,6 +1961,159 @@ router.post("/admin/users/:id/promote-admin", requireAdmin, async (req, res) => 
   } catch (error) {
     console.error("Admin promote failed:", error.message);
     res.status(500).json({ error: "Unable to promote user." });
+  }
+});
+
+router.get("/validation-tasks", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const dialect = cleanDialect(req.query.dialect);
+    const participantId = cleanText(req.query.participantId);
+
+    if (!dialect || !participantId) {
+      return res.status(400).json({ error: "Dialect and participant ID are required." });
+    }
+
+    // Fetch recordings in volunteer's dialect, excluding their own
+    const { data: recordings, error: rErr } = await supabase
+      .from("recordings")
+      .select("id, participant_id, dialect, module_id, sentence_id, audio_path, validation_score, validation_weight")
+      .eq("dialect", dialect)
+      .neq("participant_id", participantId);
+
+    if (rErr) throw rErr;
+
+    if (!recordings || recordings.length === 0) {
+      return res.json({ tasks: [], validatedIds: [], globalValidationCounts: {} });
+    }
+
+    // Get prompt_bank entries to filter out image prompts and get English text
+    const sentenceIds = Array.from(new Set(recordings.map((r) => r.sentence_id)));
+    const { data: prompts, error: pErr } = await supabase
+      .from("prompt_bank")
+      .select("prompt_id, english, prompt_type, module_title")
+      .in("prompt_id", sentenceIds)
+      .neq("prompt_type", "picture_description");
+
+    if (pErr) throw pErr;
+
+    const promptMap = new Map((prompts || []).map((p) => [p.prompt_id, p]));
+
+    // Only keep recordings with a matching non-image prompt
+    const validRecordings = recordings.filter((r) => promptMap.has(r.sentence_id));
+    const recordingIds = validRecordings.map((r) => r.id);
+
+    if (recordingIds.length === 0) {
+      return res.json({ tasks: [], validatedIds: [], globalValidationCounts: {} });
+    }
+
+    // Get which recordings this volunteer has already validated
+    const { data: myValidations, error: vErr } = await supabase
+      .from("validations")
+      .select("recording_id")
+      .eq("validator_id", participantId)
+      .in("recording_id", recordingIds);
+
+    if (vErr) throw vErr;
+
+    // Get global validation counts per recording
+    const { data: allValidations, error: gErr } = await supabase
+      .from("validations")
+      .select("recording_id")
+      .in("recording_id", recordingIds);
+
+    if (gErr) throw gErr;
+
+    const globalValidationCounts = {};
+    (allValidations || []).forEach((v) => {
+      globalValidationCounts[v.recording_id] = (globalValidationCounts[v.recording_id] || 0) + 1;
+    });
+
+    // Generate signed audio URLs
+    const tasks = await Promise.all(
+      validRecordings.map(async (r) => {
+        const prompt = promptMap.get(r.sentence_id);
+        const { data: signed } = await supabase.storage
+          .from("audio-recordings")
+          .createSignedUrl(r.audio_path, 60 * 60);
+
+        return {
+          id: r.id,
+          participantId: r.participant_id,
+          dialect: r.dialect,
+          moduleId: r.module_id,
+          moduleTitle: prompt?.module_title || "",
+          sentenceId: r.sentence_id,
+          english: prompt?.english || "",
+          audioUrl: signed?.signedUrl || "",
+          validationScore: r.validation_score || 0,
+          validationWeight: r.validation_weight || 1,
+          _cardType: "validation",
+        };
+      })
+    );
+
+    res.json({
+      tasks,
+      validatedIds: (myValidations || []).map((v) => v.recording_id),
+      globalValidationCounts,
+    });
+  } catch (error) {
+    console.error("Validation tasks fetch failed:", error.message);
+    res.status(500).json({ error: "Unable to load validation tasks." });
+  }
+});
+
+router.post("/validations", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const recordingId = cleanInteger(req.body.recordingId, null, 1);
+    const participantId = cleanText(req.body.participantId);
+    const vote = req.body.vote === 1 || req.body.vote === "1" ? 1 : -1;
+
+    if (!recordingId || !participantId) {
+      return res.status(400).json({ error: "Recording ID and participant ID are required." });
+    }
+
+    // Check not validating own recording
+    const { data: recording, error: rErr } = await supabase
+      .from("recordings")
+      .select("id, participant_id, validation_score")
+      .eq("id", recordingId)
+      .maybeSingle();
+
+    if (rErr) throw rErr;
+    if (!recording) return res.status(404).json({ error: "Recording not found." });
+    if (recording.participant_id === participantId) {
+      return res.status(403).json({ error: "You cannot validate your own recording." });
+    }
+
+    // Insert validation vote
+    const { error: vErr } = await supabase
+      .from("validations")
+      .insert({ recording_id: recordingId, validator_id: participantId, vote });
+
+    if (vErr) {
+      if (vErr.code === "23505") {
+        return res.status(409).json({ error: "You have already validated this recording." });
+      }
+      throw vErr;
+    }
+
+    // Update running score on recordings
+    const { error: uErr } = await supabase
+      .from("recordings")
+      .update({ validation_score: (recording.validation_score || 0) + vote })
+      .eq("id", recordingId);
+
+    if (uErr) throw uErr;
+
+    res.status(201).json({ success: true, vote });
+  } catch (error) {
+    console.error("Validation submit failed:", error.message);
+    res.status(500).json({ error: "Unable to submit validation." });
   }
 });
 
