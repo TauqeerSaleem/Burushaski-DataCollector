@@ -41,12 +41,9 @@ export default function Signup() {
 
   const [dialect, setDialect] = useState("");
 
-  const [numOtherLangs, setNumOtherLangs] = useState("");
-  const [numOtherLangsError, setNumOtherLangsError] = useState("");
-
-  const [otherLangs, setOtherLangs] = useState("");
+  const [otherLangs, setOtherLangs] = useState([]);
+  const [otherLangsOther, setOtherLangsOther] = useState("");
   const [comfortLang, setComfortLang] = useState("");
-  const [comfortLangError, setComfortLangError] = useState("");
 
   const [originCountry, setOriginCountry] = useState("Pakistan");
   const [originCity, setOriginCity] = useState("");
@@ -70,7 +67,6 @@ export default function Signup() {
   const validateUsername = (val) => /^[a-zA-Z0-9._-]{3,32}$/.test(val);
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
   const validateMobile = (val) => /^03\d{2}-?\d{7}$/.test(val.replace(/\s/g, ""));
-  const validateNumber = (val) => /^\d+$/.test(val);
   const validateCityName = (val) => /^[A-Za-z\s'.-]{2,}$/.test(val.trim());
 
   const handleUsernameChange = (e) => {
@@ -103,24 +99,14 @@ export default function Signup() {
     }
   };
 
-  const handleNumOtherLangsChange = (e) => {
-    const value = e.target.value;
-    setNumOtherLangs(value);
-    if (value && !validateNumber(value)) {
-      setNumOtherLangsError("Must be a number");
-    } else {
-      setNumOtherLangsError("");
-    }
+  const toggleOtherLang = (lang) => {
+    setOtherLangs((prev) =>
+      prev.includes(lang) ? prev.filter((l) => l !== lang) : [...prev, lang]
+    );
   };
 
   const handleComfortLangChange = (e) => {
-    const value = e.target.value;
-    setComfortLang(value);
-    if (value && otherLangs && !otherLangs.toLowerCase().includes(value.toLowerCase())) {
-      setComfortLangError("Should be one of the languages you listed above");
-    } else {
-      setComfortLangError("");
-    }
+    setComfortLang(e.target.value);
   };
 
   const handleOriginCityChange = (e) => {
@@ -170,9 +156,7 @@ export default function Signup() {
     age &&
     gender &&
     dialect &&
-    numOtherLangs !== "" &&
-    validateNumber(numOtherLangs) &&
-    !comfortLangError &&
+    otherLangs.length > 0 &&
     originCountry &&
     originCity &&
     validateCityName(originCity) &&
@@ -191,8 +175,8 @@ export default function Signup() {
       contactPref,
       email,
       mobile,
-      numOtherLangs,
       otherLangs,
+      otherLangsOther,
       comfortLang,
       placeOfOrigin: { country: originCountry, city: originCity.trim(), locality: originLocality.trim() },
       placesLived,
@@ -489,33 +473,41 @@ export default function Signup() {
               </select>
             </div>
 
-            {/* Number of other languages */}
-            <div className="space-y-1">
-              <label className="text-xs text-gray-400">
-                How many other languages do you speak besides Burushaski? *
-              </label>
-              <input
-                className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
-                  numOtherLangsError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
-                }`}
-                placeholder="e.g. 2"
-                value={numOtherLangs}
-                onChange={handleNumOtherLangsChange}
-              />
-              {numOtherLangsError && <p className="text-xs text-red-400">{numOtherLangsError}</p>}
-            </div>
-
             {/* Which other languages */}
             <div className="space-y-1">
               <label className="text-xs text-gray-400">
-                Which other languages do you speak? (optional)
+                Which other languages do you speak? *
               </label>
-              <input
-                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                placeholder="e.g. Urdu, English"
-                value={otherLangs}
-                onChange={(e) => setOtherLangs(e.target.value)}
-              />
+              <div className="flex flex-col gap-1 pt-1">
+                {["Shina", "Wakhi", "Khowar", "Urdu", "English", "Punjabi", "Pashto"].map((lang) => (
+                  <label key={lang} className="flex items-center gap-2 text-sm text-white">
+                    <input
+                      type="checkbox"
+                      checked={otherLangs.includes(lang)}
+                      onChange={() => toggleOtherLang(lang)}
+                      className="accent-yellow-400"
+                    />
+                    {lang}
+                  </label>
+                ))}
+                <label className="flex items-center gap-2 text-sm text-white">
+                  <input
+                    type="checkbox"
+                    checked={otherLangs.includes("other")}
+                    onChange={() => toggleOtherLang("other")}
+                    className="accent-yellow-400"
+                  />
+                  Others
+                </label>
+                {otherLangs.includes("other") && (
+                  <input
+                    className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                    placeholder="eg Mandarin, Spanish, Turkish"
+                    value={otherLangsOther}
+                    onChange={(e) => setOtherLangsOther(e.target.value)}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Most comfortable language */}
@@ -524,14 +516,11 @@ export default function Signup() {
                 Which language are you most comfortable speaking? (optional)
               </label>
               <input
-                className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
-                  comfortLangError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
-                }`}
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
                 placeholder="e.g. Burushaski"
                 value={comfortLang}
                 onChange={handleComfortLangChange}
               />
-              {comfortLangError && <p className="text-xs text-red-400">{comfortLangError}</p>}
             </div>
           </div>
 

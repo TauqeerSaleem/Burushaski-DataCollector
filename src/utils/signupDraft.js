@@ -55,8 +55,10 @@ export function draftToSignupPayload(draft) {
     dialect: draft.dialect,
     dialects: draft.dialects || [],
     otherDialect: draft.otherDialect,
-    otherLanguages: parseCommaList(draft.otherLangs),
-    otherLanguageCount: draft.numOtherLangs,
+    otherLanguages: [
+      ...(draft.otherLangs || []).filter((l) => l !== "other"),
+      ...parseCommaList(draft.otherLangsOther),
+    ],
     comfortLanguage: draft.comfortLang,
     contactPreference: draft.contactPref,
     email: draft.email,
