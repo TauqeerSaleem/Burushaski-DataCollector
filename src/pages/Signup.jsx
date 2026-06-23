@@ -39,8 +39,7 @@ export default function Signup() {
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
 
-  const [dialects, setDialects] = useState([]);
-  const [otherDialect, setOtherDialect] = useState("");
+  const [dialect, setDialect] = useState("");
 
   const [numOtherLangs, setNumOtherLangs] = useState("");
   const [numOtherLangsError, setNumOtherLangsError] = useState("");
@@ -160,19 +159,6 @@ export default function Signup() {
     setPlacesLived((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const toggleDialect = (value) => {
-    setDialects((prev) =>
-      prev.includes(value)
-        ? prev.filter((d) => d !== value)
-        : [...prev, value]
-    );
-  };
-
-  const primaryDialect = () => {
-    if (dialects.includes("hunza")) return "hunza";
-    if (dialects.includes("yasin")) return "yasin";
-    return dialects[0] || "";
-  };
 
   const canSubmit =
     username &&
@@ -183,7 +169,7 @@ export default function Signup() {
     (contactPref !== "mobile" || (mobile && validateMobile(mobile))) &&
     age &&
     gender &&
-    dialects.length > 0 &&
+    dialect &&
     numOtherLangs !== "" &&
     validateNumber(numOtherLangs) &&
     !comfortLangError &&
@@ -197,15 +183,14 @@ export default function Signup() {
 
     const draft = {
       username,
-      dialect: primaryDialect(),
+      dialect,
+      dialects: dialect ? [dialect] : [],
       gender,
       role,
       age,
       contactPref,
       email,
       mobile,
-      dialects,
-      otherDialect,
       numOtherLangs,
       otherLangs,
       comfortLang,
@@ -492,41 +477,16 @@ export default function Signup() {
               <label className="text-xs text-gray-400">
                 Which Burushaski dialect do you primarily speak? *
               </label>
-              <div className="flex flex-col gap-1 pt-1">
-                {[
-                  { value: "hunza", label: "Hunza" },
-                  { value: "nagar", label: "Nagar" },
-                  { value: "yasin", label: "Yasin" },
-                  { value: "mixed", label: "Mixed" },
-                ].map((opt) => (
-                  <label key={opt.value} className="flex items-center gap-2 text-sm text-white">
-                    <input
-                      type="checkbox"
-                      checked={dialects.includes(opt.value)}
-                      onChange={() => toggleDialect(opt.value)}
-                      className="accent-yellow-400"
-                    />
-                    {opt.label}
-                  </label>
-                ))}
-                <label className="flex items-center gap-2 text-sm text-white">
-                  <input
-                    type="checkbox"
-                    checked={dialects.includes("other")}
-                    onChange={() => toggleDialect("other")}
-                    className="accent-yellow-400"
-                  />
-                  Other:
-                </label>
-                {dialects.includes("other") && (
-                  <input
-                    className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                    placeholder="Please specify"
-                    value={otherDialect}
-                    onChange={(e) => setOtherDialect(e.target.value)}
-                  />
-                )}
-              </div>
+              <select
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                value={dialect}
+                onChange={(e) => setDialect(e.target.value)}
+              >
+                <option value="">Select dialect</option>
+                <option value="hunza">Hunza</option>
+                <option value="nagar">Nagar</option>
+                <option value="yasin">Yasin</option>
+              </select>
             </div>
 
             {/* Number of other languages */}
