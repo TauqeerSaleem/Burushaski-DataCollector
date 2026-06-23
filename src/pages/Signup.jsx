@@ -54,6 +54,7 @@ export default function Signup() {
   const [livedCity, setLivedCity] = useState("");
   const [livedCityError, setLivedCityError] = useState("");
   const [livedLocality, setLivedLocality] = useState("");
+  const [livedTimeLived, setLivedTimeLived] = useState("");
   const [placesLived, setPlacesLived] = useState([]);
   const [placesLivedError, setPlacesLivedError] = useState("");
 
@@ -134,10 +135,11 @@ export default function Signup() {
       setPlacesLivedError("Select a country and enter a valid city before adding");
       return;
     }
-    setPlacesLived((prev) => [...prev, { country: livedCountry, city: livedCity.trim(), locality: livedLocality.trim() }]);
+    setPlacesLived((prev) => [...prev, { country: livedCountry, city: livedCity.trim(), locality: livedLocality.trim(), timeLived: livedTimeLived.trim() }]);
     setLivedCountry("Pakistan");
     setLivedCity("");
     setLivedLocality("");
+    setLivedTimeLived("");
     setPlacesLivedError("");
   };
 
@@ -425,6 +427,12 @@ export default function Signup() {
                 value={livedLocality}
                 onChange={(e) => setLivedLocality(e.target.value)}
               />
+              <input
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Time lived here (optional, e.g. 2 years)"
+                value={livedTimeLived}
+                onChange={(e) => setLivedTimeLived(e.target.value)}
+              />
 
               <button
                 type="button"
@@ -443,7 +451,7 @@ export default function Signup() {
                       key={`${p.country}-${p.city}-${i}`}
                       className="flex items-center gap-1 bg-neutral-800 border border-neutral-700 rounded-full px-3 py-1 text-xs text-white"
                     >
-                      {p.locality ? `${p.locality}, ` : ""}{p.city}, {p.country}
+                      {p.locality ? `${p.locality}, ` : ""}{p.city}, {p.country}{p.timeLived ? ` (${p.timeLived})` : ""}
                       <button
                         type="button"
                         onClick={() => removePlaceLived(i)}
