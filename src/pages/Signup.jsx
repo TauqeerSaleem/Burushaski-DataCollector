@@ -49,11 +49,11 @@ export default function Signup() {
   const [comfortLang, setComfortLang] = useState("");
   const [comfortLangError, setComfortLangError] = useState("");
 
-  const [birthCountry, setBirthCountry] = useState("");
+  const [birthCountry, setBirthCountry] = useState("Pakistan");
   const [birthCity, setBirthCity] = useState("");
   const [birthCityError, setBirthCityError] = useState("");
 
-  const [livedCountry, setLivedCountry] = useState("");
+  const [livedCountry, setLivedCountry] = useState("Pakistan");
   const [livedCity, setLivedCity] = useState("");
   const [livedCityError, setLivedCityError] = useState("");
   const [placesLived, setPlacesLived] = useState([]);
