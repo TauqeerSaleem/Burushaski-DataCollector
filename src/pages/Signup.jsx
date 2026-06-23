@@ -36,7 +36,7 @@ export default function Signup() {
   const [mobile, setMobile] = useState("");
   const [mobileError, setMobileError] = useState("");
 
-  const [ageGroup, setAgeGroup] = useState("");
+  const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
 
   const [dialects, setDialects] = useState([]);
@@ -178,7 +178,7 @@ export default function Signup() {
     contactPref &&
     (contactPref !== "email" || (email && validateEmail(email))) &&
     (contactPref !== "mobile" || (mobile && validateMobile(mobile))) &&
-    ageGroup &&
+    age &&
     gender &&
     dialects.length > 0 &&
     numOtherLangs !== "" &&
@@ -197,7 +197,7 @@ export default function Signup() {
       dialect: primaryDialect(),
       gender,
       role,
-      ageGroup,
+      age,
       contactPref,
       email,
       mobile,
@@ -361,22 +361,18 @@ export default function Signup() {
               </div>
             )}
 
-            {/* Age group */}
+            {/* Age */}
             <div className="space-y-1">
-              <label className="text-xs text-gray-400">What is your age group? *</label>
-              <select
+              <label className="text-xs text-gray-400">What is your age? *</label>
+              <input
+                type="number"
+                min="1"
+                max="120"
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                value={ageGroup}
-                onChange={(e) => setAgeGroup(e.target.value)}
-              >
-                <option value="">Select age group</option>
-                <option value="under18">Under 18</option>
-                <option value="18-25">18 - 25</option>
-                <option value="26-35">26 - 35</option>
-                <option value="35-45">35 - 45</option>
-                <option value="46-60">46 - 60</option>
-                <option value="60+">60+</option>
-              </select>
+                placeholder="Enter your age"
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+              />
             </div>
 
             {/* Gender */}
