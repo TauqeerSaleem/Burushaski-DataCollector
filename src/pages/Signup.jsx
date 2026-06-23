@@ -160,6 +160,7 @@ export default function Signup() {
     originCountry &&
     originCity &&
     validateCityName(originCity) &&
+    originLocality &&
     placesLived.length > 0;
 
   const submit = () => {
@@ -388,7 +389,7 @@ export default function Signup() {
               {originCityError && <p className="text-xs text-red-400">{originCityError}</p>}
               <input
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                placeholder="Locality / Colony / Mohallah (optional)"
+                placeholder="Locality / Colony / Mohallah *"
                 value={originLocality}
                 onChange={(e) => setOriginLocality(e.target.value)}
               />
