@@ -114,7 +114,7 @@ const editableUserFields = [
   ["gender", "Gender"],
   ["age", "Age"],
   ["mobileNumber", "Mobile"],
-  ["placeOfBirth", "Birthplace"],
+  ["placeOfOrigin", "Place of origin"],
   ["comfortLanguage", "Comfort language"],
   ["active", "Account status"],
 ];
@@ -934,7 +934,7 @@ function UsersTab({ users, onRefresh }) {
       participantUsers.filter((user) => {
         const status = user.active ? "active" : "inactive";
         return (
-          matchesText(user, filters.search, ["username", "participantId", "name", "email", "mobileNumber", "placeOfBirth", "comfortLanguage"]) &&
+          matchesText(user, filters.search, ["username", "participantId", "name", "email", "mobileNumber", "placeOfOrigin", "comfortLanguage"]) &&
           (filters.role === "all" || user.role === filters.role) &&
           (filters.dialect === "all" || user.dialect === filters.dialect) &&
           (filters.status === "all" || status === filters.status)
@@ -1117,7 +1117,7 @@ function ContentCreatorTab({ users, recordsPage }) {
       contentCreators.filter((user) => {
         const status = user.active ? "active" : "inactive";
         return (
-          matchesText(user, filters.search, ["username", "participantId", "name", "email", "mobileNumber", "placeOfBirth"]) &&
+          matchesText(user, filters.search, ["username", "participantId", "name", "email", "mobileNumber", "placeOfOrigin"]) &&
           (filters.status === "all" || filters.status === status)
         );
       }),

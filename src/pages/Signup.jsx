@@ -49,9 +49,10 @@ export default function Signup() {
   const [comfortLang, setComfortLang] = useState("");
   const [comfortLangError, setComfortLangError] = useState("");
 
-  const [birthCountry, setBirthCountry] = useState("Pakistan");
-  const [birthCity, setBirthCity] = useState("");
-  const [birthCityError, setBirthCityError] = useState("");
+  const [originCountry, setOriginCountry] = useState("Pakistan");
+  const [originCity, setOriginCity] = useState("");
+  const [originCityError, setOriginCityError] = useState("");
+  const [originLocality, setOriginLocality] = useState("");
 
   const [livedCountry, setLivedCountry] = useState("Pakistan");
   const [livedCity, setLivedCity] = useState("");
@@ -123,13 +124,13 @@ export default function Signup() {
     }
   };
 
-  const handleBirthCityChange = (e) => {
+  const handleOriginCityChange = (e) => {
     const value = e.target.value;
-    setBirthCity(value);
+    setOriginCity(value);
     if (value && !validateCityName(value)) {
-      setBirthCityError("Enter a valid city name");
+      setOriginCityError("Enter a valid city name");
     } else {
-      setBirthCityError("");
+      setOriginCityError("");
     }
   };
 
@@ -186,9 +187,9 @@ export default function Signup() {
     numOtherLangs !== "" &&
     validateNumber(numOtherLangs) &&
     !comfortLangError &&
-    birthCountry &&
-    birthCity &&
-    validateCityName(birthCity) &&
+    originCountry &&
+    originCity &&
+    validateCityName(originCity) &&
     placesLived.length > 0;
 
   const submit = () => {
@@ -208,7 +209,7 @@ export default function Signup() {
       numOtherLangs,
       otherLangs,
       comfortLang,
-      birthplace: { country: birthCountry, city: birthCity.trim() },
+      placeOfOrigin: { country: originCountry, city: originCity.trim(), locality: originLocality.trim() },
       placesLived,
     };
 
@@ -392,14 +393,14 @@ export default function Signup() {
               </select>
             </div>
 
-            {/* Place of birth */}
+            {/* Place of origin */}
             <div className="space-y-1">
-              <label className="text-xs text-gray-400">Place of birth *</label>
+              <label className="text-xs text-gray-400">Place of origin *</label>
               <div className="grid grid-cols-2 gap-2">
                 <select
                   className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                  value={birthCountry}
-                  onChange={(e) => setBirthCountry(e.target.value)}
+                  value={originCountry}
+                  onChange={(e) => setOriginCountry(e.target.value)}
                 >
                   <option value="">Country</option>
                   {COUNTRIES.map((c) => (
@@ -408,14 +409,20 @@ export default function Signup() {
                 </select>
                 <input
                   className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
-                    birthCityError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
+                    originCityError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
                   }`}
                   placeholder="City"
-                  value={birthCity}
-                  onChange={handleBirthCityChange}
+                  value={originCity}
+                  onChange={handleOriginCityChange}
                 />
               </div>
-              {birthCityError && <p className="text-xs text-red-400">{birthCityError}</p>}
+              {originCityError && <p className="text-xs text-red-400">{originCityError}</p>}
+              <input
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Locality / Colony / Mohallah (optional)"
+                value={originLocality}
+                onChange={(e) => setOriginLocality(e.target.value)}
+              />
             </div>
 
             {/* Places lived */}

@@ -329,7 +329,7 @@ function userToClient(row) {
     otherLanguageCount: row.other_language_count || "",
     otherLanguages: row.other_languages || [],
     comfortLanguage: row.comfort_language || "",
-    placeOfBirth: row.place_of_birth || "",
+    placeOfOrigin: row.place_of_origin || "",
     placesLived: row.places_lived || [],
     consentAccepted: Boolean(row.consent_accepted),
     active: row.active !== false,
@@ -364,7 +364,7 @@ function userUpdatePayload(body) {
     ...(body.comfortLanguage !== undefined
       ? { comfort_language: cleanText(body.comfortLanguage) }
       : {}),
-    ...(body.placeOfBirth !== undefined ? { place_of_birth: cleanText(body.placeOfBirth) } : {}),
+    ...(body.placeOfOrigin !== undefined ? { place_of_origin: cleanText(body.placeOfOrigin) } : {}),
     ...(body.placesLived !== undefined ? { places_lived: cleanArray(body.placesLived) } : {}),
     ...(body.active !== undefined ? { active: Boolean(body.active) } : {}),
     updated_at: new Date().toISOString(),
@@ -1501,7 +1501,7 @@ router.get("/admin/export/:type", requireAdmin, async (req, res) => {
         { label: "age", value: "age" },
         { label: "mobile_number", value: "mobile_number" },
         { label: "comfort_language", value: "comfort_language" },
-        { label: "place_of_birth", value: "place_of_birth" },
+        { label: "place_of_origin", value: "place_of_origin" },
         { label: "places_lived", value: (row) => (row.places_lived || []).join("; ") },
         { label: "other_languages", value: (row) => (row.other_languages || []).join("; ") },
         { label: "active", value: "active" },
