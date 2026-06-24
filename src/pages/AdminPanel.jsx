@@ -43,14 +43,11 @@ const dialectOptions = [
   { value: "hunza", label: "Hunza" },
   { value: "nagar", label: "Nagar" },
   { value: "yasin", label: "Yasin" },
-  { value: "mixed", label: "Mixed / general" },
 ];
 
 const promptTypeOptions = [
-  { value: "translation", label: "Read or translate a sentence" },
-  { value: "elicitation", label: "Answer an open prompt" },
+  { value: "translation", label: "Speak an English sentence" },
   { value: "picture_description", label: "Describe an image" },
-  { value: "gamified", label: "Game-style prompt" },
 ];
 
 const defaultPromptGroups = [
@@ -76,7 +73,8 @@ const emptyPrompt = {
   promptId: "",
   moduleId: "admin-prompts",
   moduleTitle: "Admin Prompts",
-  promptType: "elicitation",
+  promptType: "translation",
+  legacyPromptType: "",
   dialect: "",
   english: "",
   transliteration: "",
@@ -88,6 +86,13 @@ const emptyPrompt = {
   weight: 1,
   sortOrder: 0,
   active: true,
+};
+
+const emptyBatchPrompt = {
+  groupTitle: "PiSCES Images",
+  dialect: "",
+  english: "Describe what you see in this image in Burushaski.",
+  active: false,
 };
 
 const emptyTask = {
@@ -137,7 +142,17 @@ function slugify(value, fallback = "admin-prompts") {
 }
 
 function promptTypeLabel(value) {
-  return promptTypeOptions.find((option) => option.value === value)?.label || value || "-";
+  return value === "picture_description" ? "Describe an image" : value ? "Speak an English sentence" : "-";
+}
+
+function promptTypeFilterValue(value) {
+  return value === "picture_description" ? "picture_description" : "translation";
+}
+
+function dialectLabel(value) {
+  const option = dialectOptions.find((item) => item.value === value);
+  if (option) return option.label;
+  return value ? String(value).charAt(0).toUpperCase() + String(value).slice(1) : "-";
 }
 
 function matchesText(row, query, fields) {
@@ -255,7 +270,7 @@ function OverviewTab({ overview, prompts }) {
     count: usersByRole[role] || 0,
   }));
   const dialectRows = Object.entries(overview?.usersByDialect || {}).map(([dialect, count]) => ({
-    dialect,
+    dialect: dialectLabel(dialect === "unknown" ? "" : dialect),
     count,
   }));
   const recordingModuleRows = Object.entries(overview?.recordingsByModule || {})
@@ -264,11 +279,12 @@ function OverviewTab({ overview, prompts }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <Stat label="Volunteers" value={usersByRole[USER_ROLES.VOLUNTEER] || 0} />
         <Stat label="Researchers" value={usersByRole[USER_ROLES.RESEARCHER] || 0} />
         <Stat label="Content creators" value={usersByRole[USER_ROLES.CONTENT_CONTRIBUTOR] || 0} />
         <Stat label="Recordings" value={totals.recordings || 0} />
+        <Stat label="Validations" value={totals.validations || 0} />
         <Stat label="Active prompts" value={(prompts || []).filter((prompt) => prompt.active).length} />
       </div>
 
@@ -294,6 +310,11 @@ function PromptsTab({ prompts, onRefresh }) {
   const [sort, setSort] = useState({ key: "moduleTitle", direction: "asc" });
   const [error, setError] = useState("");
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [batchForm, setBatchForm] = useState(emptyBatchPrompt);
+  const [batchFiles, setBatchFiles] = useState([]);
+  const [batchQueue, setBatchQueue] = useState([]);
+  const [batchUploading, setBatchUploading] = useState(false);
+  const batchInputRef = useRef(null);
 
   const promptGroups = useMemo(
     () => uniq([...defaultPromptGroups, ...prompts.map((prompt) => prompt.moduleTitle || prompt.moduleId)]),
@@ -308,7 +329,7 @@ function PromptsTab({ prompts, onRefresh }) {
         return (
           matchesText(prompt, filters.search, ["promptId", "moduleTitle", "english", "transliteration", "grammaticalCategory"]) &&
           (filters.dialect === "all" || dialect === filters.dialect) &&
-          (filters.type === "all" || prompt.promptType === filters.type) &&
+          (filters.type === "all" || promptTypeFilterValue(prompt.promptType) === filters.type) &&
           (filters.status === "all" || status === filters.status)
         );
       }),
@@ -317,7 +338,7 @@ function PromptsTab({ prompts, onRefresh }) {
   const sortedPrompts = useMemo(() => {
     const valueFor = (prompt, key) => {
       if (key === "promptType") return promptTypeLabel(prompt.promptType);
-      if (key === "dialect") return prompt.dialect || "all";
+      if (key === "dialect") return dialectLabel(prompt.dialect);
       if (key === "active") return prompt.active ? "active" : "inactive";
       if (key === "recordingCount") return Number(prompt.recordingCount || 0);
       return prompt[key] || "";
@@ -415,6 +436,12 @@ function PromptsTab({ prompts, onRefresh }) {
       const payload = {
         ...form,
         promptId: form.promptId || undefined,
+        promptType: form.promptType === "picture_description"
+          ? "picture_description"
+          : form.legacyPromptType && form.legacyPromptType !== "picture_description"
+            ? form.legacyPromptType
+            : "translation",
+        legacyPromptType: undefined,
         moduleTitle: groupTitle,
         moduleId: slugify(groupTitle),
         grammaticalCategory: groupTitle,
@@ -441,7 +468,13 @@ function PromptsTab({ prompts, onRefresh }) {
 
   const edit = (prompt) => {
     setEditingId(prompt.id);
-    setForm({ ...emptyPrompt, ...prompt, mediaUrl: prompt.mediaPath || prompt.mediaUrl || "" });
+    setForm({
+      ...emptyPrompt,
+      ...prompt,
+      legacyPromptType: prompt.promptType,
+      promptType: prompt.promptType === "picture_description" ? "picture_description" : "translation",
+      mediaUrl: prompt.mediaPath || prompt.mediaUrl || "",
+    });
     setGroupMode(prompt.moduleTitle || "Admin Prompts");
     setNewGroupTitle("");
     setError("");
@@ -473,6 +506,88 @@ function PromptsTab({ prompts, onRefresh }) {
     } finally {
       setUploadingMedia(false);
       event.target.value = "";
+    }
+  };
+
+  const updateBatchFiles = (event) => {
+    setBatchFiles(Array.from(event.target.files || []));
+    setBatchQueue([]);
+  };
+
+  const clearBatch = () => {
+    setBatchFiles([]);
+    setBatchQueue([]);
+    if (batchInputRef.current) {
+      batchInputRef.current.value = "";
+    }
+  };
+
+  const uploadBatch = async () => {
+    if (!batchFiles.length || batchUploading) return;
+
+    const groupTitle = batchForm.groupTitle.trim() || "PiSCES Images";
+    const promptText = batchForm.english.trim();
+    if (!promptText) {
+      setError("Batch image prompts need volunteer-facing text.");
+      return;
+    }
+
+    setError("");
+    setBatchUploading(true);
+    setBatchQueue(batchFiles.map((file) => ({ name: file.name, status: "Queued" })));
+
+    let succeeded = 0;
+    const results = [];
+
+    for (const file of batchFiles) {
+      setBatchQueue((current) =>
+        current.map((item) => item.name === file.name ? { ...item, status: "Uploading image" } : item)
+      );
+
+      try {
+        const media = await uploadPromptMedia(file);
+        setBatchQueue((current) =>
+          current.map((item) => item.name === file.name ? { ...item, status: "Creating prompt" } : item)
+        );
+
+        await createPrompt({
+          moduleTitle: groupTitle,
+          moduleId: slugify(groupTitle, "pisces-images"),
+          grammaticalCategory: groupTitle,
+          curriculumStage: groupTitle,
+          promptType: "picture_description",
+          dialect: batchForm.dialect,
+          english: promptText,
+          transliteration: "",
+          mediaType: "image",
+          mediaUrl: media.path || media.signedUrl || "",
+          difficulty: "medium",
+          weight: 1,
+          sortOrder: 0,
+          active: batchForm.active,
+        });
+
+        succeeded += 1;
+        results.push({ name: file.name, status: "Done" });
+        setBatchQueue((current) =>
+          current.map((item) => item.name === file.name ? { ...item, status: "Done" } : item)
+        );
+      } catch (err) {
+        const message = err.message || "Failed";
+        results.push({ name: file.name, status: message });
+        setBatchQueue((current) =>
+          current.map((item) => item.name === file.name ? { ...item, status: message } : item)
+        );
+      }
+    }
+
+    setBatchUploading(false);
+    setBatchQueue(results);
+    if (succeeded > 0) {
+      await onRefresh();
+    }
+    if (succeeded !== batchFiles.length) {
+      setError(`${succeeded} of ${batchFiles.length} image prompts were created. Review the queue for failed files.`);
     }
   };
 
@@ -538,7 +653,7 @@ function PromptsTab({ prompts, onRefresh }) {
           )}
           <label className="space-y-1 text-xs text-neutral-400">
             <span>Task type</span>
-            <select className="select-field" value={form.promptType} onChange={(event) => updatePromptType(event.target.value)}>
+            <select className="select-field" value={promptTypeFilterValue(form.promptType)} onChange={(event) => updatePromptType(event.target.value)}>
               {promptTypeOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
@@ -608,7 +723,7 @@ function PromptsTab({ prompts, onRefresh }) {
               {uploadingMedia ? "Uploading..." : "Upload local image"}
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.bmp"
                 className="hidden"
                 disabled={uploadingMedia}
                 onChange={uploadMedia}
@@ -642,6 +757,112 @@ function PromptsTab({ prompts, onRefresh }) {
         </div>
       </form>
 
+      <section className="space-y-4 rounded-lg border border-neutral-800 bg-neutral-900/80 p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Batch image prompts</h3>
+            <p className="text-xs text-neutral-500">
+              Upload many images with the same instruction. Each image becomes its own prompt for volunteers.
+            </p>
+          </div>
+          <Badge tone={batchForm.active ? "green" : "neutral"}>{batchForm.active ? "Active" : "Draft"}</Badge>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="space-y-1 text-xs text-neutral-400">
+            <span>Prompt group</span>
+            <input
+              className="input-field"
+              value={batchForm.groupTitle}
+              onChange={(event) => setBatchForm({ ...batchForm, groupTitle: event.target.value })}
+            />
+          </label>
+          <label className="space-y-1 text-xs text-neutral-400">
+            <span>Dialect</span>
+            <select className="select-field" value={batchForm.dialect} onChange={(event) => setBatchForm({ ...batchForm, dialect: event.target.value })}>
+              {dialectOptions.map((option) => (
+                <option key={option.value || "batch-all"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-neutral-400">
+            <span>Visibility</span>
+            <select className="select-field" value={batchForm.active ? "true" : "false"} onChange={(event) => setBatchForm({ ...batchForm, active: event.target.value === "true" })}>
+              <option value="false">Draft / hidden</option>
+              <option value="true">Active for volunteers</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-neutral-400">
+            <span>Images</span>
+            <input
+              type="file"
+              multiple
+              ref={batchInputRef}
+              accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.bmp"
+              className="input-field"
+              disabled={batchUploading}
+              onChange={updateBatchFiles}
+            />
+          </label>
+        </div>
+
+        <label className="block space-y-1 text-xs text-neutral-400">
+          <span>Volunteer sees</span>
+          <textarea
+            className="input-field min-h-20"
+            value={batchForm.english}
+            onChange={(event) => setBatchForm({ ...batchForm, english: event.target.value })}
+          />
+        </label>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={batchUploading || !batchFiles.length || !batchForm.english.trim()}
+            onClick={uploadBatch}
+          >
+            {batchUploading ? "Uploading..." : `Create ${batchFiles.length || ""} image prompt${batchFiles.length === 1 ? "" : "s"}`}
+          </button>
+          <button
+            type="button"
+            className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={batchUploading || (!batchFiles.length && !batchQueue.length)}
+            onClick={clearBatch}
+          >
+            Clear batch
+          </button>
+          {batchFiles.length > 0 && (
+            <p className="text-sm text-neutral-500">{batchFiles.length} file{batchFiles.length === 1 ? "" : "s"} selected</p>
+          )}
+        </div>
+
+        {batchQueue.length > 0 && (
+          <div className="max-h-56 overflow-auto rounded-md border border-neutral-800 bg-neutral-950/70">
+            <table className="min-w-full divide-y divide-neutral-800 text-sm">
+              <thead className="bg-neutral-950 text-left text-xs uppercase text-neutral-500">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">File</th>
+                  <th className="px-3 py-2 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-800">
+                {batchQueue.map((item, index) => (
+                  <tr key={`${item.name}-${index}`}>
+                    <td className="px-3 py-2 text-neutral-300">{item.name}</td>
+                    <td className={`px-3 py-2 ${item.status === "Done" ? "text-emerald-300" : item.status === "Queued" || item.status.includes("ing") ? "text-yellow-300" : "text-red-300"}`}>
+                      {item.status}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-5">
         <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
           <span>Search prompts</span>
@@ -652,7 +873,7 @@ function PromptsTab({ prompts, onRefresh }) {
           <select className="select-field" value={filters.dialect} onChange={(event) => setFilters({ ...filters, dialect: event.target.value })}>
             <option value="all">All dialects</option>
             {filterDialects.map((dialect) => (
-              <option key={dialect} value={dialect}>{dialect}</option>
+              <option key={dialect} value={dialect}>{dialectLabel(dialect === "all dialects" ? "" : dialect)}</option>
             ))}
           </select>
         </label>
@@ -683,7 +904,7 @@ function PromptsTab({ prompts, onRefresh }) {
           { key: "moduleTitle", label: "Group", sortable: true },
           { key: "english", label: "Volunteer sees", sortable: true, render: (prompt) => <span className="block max-w-md text-neutral-300">{prompt.english}</span> },
           { key: "promptType", label: "Type", sortable: true, render: (prompt) => <Badge tone={prompt.promptType === "picture_description" ? "blue" : "neutral"}>{promptTypeLabel(prompt.promptType)}</Badge> },
-          { key: "dialect", label: "Dialect", sortable: true, render: (prompt) => prompt.dialect || "all" },
+          { key: "dialect", label: "Dialect", sortable: true, render: (prompt) => dialectLabel(prompt.dialect) },
           { key: "recordingCount", label: "Recordings", sortable: true },
           { key: "active", label: "Status", sortable: true, render: (prompt) => <Badge tone={prompt.active ? "green" : "neutral"}>{prompt.active ? "Active" : "Inactive"}</Badge> },
           {
@@ -999,7 +1220,7 @@ function UsersTab({ users, onRefresh }) {
           <select className="select-field" value={filters.dialect} onChange={(event) => setFilters({ ...filters, dialect: event.target.value })}>
             <option value="all">All dialects</option>
             {dialects.map((dialect) => (
-              <option key={dialect} value={dialect}>{dialect}</option>
+              <option key={dialect} value={dialect}>{dialectLabel(dialect)}</option>
             ))}
           </select>
         </label>
@@ -1059,6 +1280,18 @@ function UsersTab({ users, onRefresh }) {
                         <option value="true">Active</option>
                         <option value="false">Inactive</option>
                       </select>
+                    ) : key === "dialect" ? (
+                      <select
+                        className="select-field"
+                        value={draft.dialect || ""}
+                        onChange={(event) => setDraft({ ...draft, dialect: event.target.value })}
+                      >
+                        {dialectOptions.map((option) => (
+                          <option key={option.value || "blank"} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                     ) : (
                       <input
                         className="input-field"
@@ -1079,7 +1312,7 @@ function UsersTab({ users, onRefresh }) {
               </div>
             ) : (
               <div className="mt-4 grid gap-2 text-sm text-neutral-300 md:grid-cols-4">
-                <p>Dialect: {user.dialect || "-"}</p>
+                <p>Dialect: {dialectLabel(user.dialect)}</p>
                 <p>Gender: {user.gender || "-"}</p>
                 <p>Age: {user.age || "-"}</p>
                 <p>Contact: {user.email || user.mobileNumber || user.contactPreference || "-"}</p>
@@ -1167,7 +1400,7 @@ function ContentCreatorTab({ users, recordsPage }) {
         columns={[
           { key: "username", label: "Username", sortable: true },
           { key: "participantId", label: "Participant ID", sortable: true },
-          { key: "dialect", label: "Dialect", sortable: true },
+          { key: "dialect", label: "Dialect", sortable: true, render: (user) => dialectLabel(user.dialect) },
           { key: "recordingCount", label: "Records", sortable: true },
           { key: "contact", label: "Contact", render: (user) => user.email || user.mobileNumber || "-" },
           { key: "active", label: "Status", sortable: true, render: (user) => <Badge tone={user.active ? "green" : "neutral"}>{user.active ? "Active" : "Inactive"}</Badge> },
@@ -1205,7 +1438,7 @@ function DataTab({
   onApproveCorrection,
 }) {
   const [activeView, setActiveView] = useState("records");
-  const [filters, setFilters] = useState({ search: "", moduleId: "all", participantId: "all" });
+  const [filters, setFilters] = useState({ search: "", moduleId: "all", participantId: "all", dialect: "all", role: "all" });
   const [correctionFilters, setCorrectionFilters] = useState({ search: "", participantId: "all", moduleId: "all", promptId: "all" });
   const [recordSort, setRecordSort] = useState({ key: "createdAt", direction: "desc" });
   const [correctionSort, setCorrectionSort] = useState({ key: "count", direction: "desc" });
@@ -1239,6 +1472,8 @@ function DataTab({
       search: filters.search,
       moduleId: filters.moduleId,
       participantId: filters.participantId,
+      dialect: filters.dialect,
+      role: filters.role,
     });
   };
 
@@ -1252,7 +1487,7 @@ function DataTab({
   };
 
   const clearRecordFilters = () => {
-    const cleared = { search: "", moduleId: "all", participantId: "all" };
+    const cleared = { search: "", moduleId: "all", participantId: "all", dialect: "all", role: "all" };
     setFilters(cleared);
     onRecordsPage(1, cleared);
   };
@@ -1300,10 +1535,10 @@ function DataTab({
 
       {activeView === "records" ? (
         <div className="space-y-4">
-          <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-4">
+          <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-6">
             <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
               <span>Search records</span>
-              <input className="input-field" placeholder="Participant, group, prompt, audio path..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
+              <input className="input-field" placeholder="Participant, username, group, prompt, transcript..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
             </label>
             <label className="space-y-1 text-xs text-neutral-400">
               <span>Prompt group</span>
@@ -1311,6 +1546,24 @@ function DataTab({
                 <option value="all">All groups</option>
                 {modules.map((moduleId) => (
                   <option key={moduleId} value={moduleId}>{moduleId}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs text-neutral-400">
+              <span>Dialect</span>
+              <select className="select-field" value={filters.dialect} onChange={(event) => setFilters({ ...filters, dialect: event.target.value })}>
+                <option value="all">All dialects</option>
+                {dialectOptions.filter((option) => option.value).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs text-neutral-400">
+              <span>Role</span>
+              <select className="select-field" value={filters.role} onChange={(event) => setFilters({ ...filters, role: event.target.value })}>
+                <option value="all">All roles</option>
+                {participantRoleOptions.map((role) => (
+                  <option key={role} value={role}>{getRoleLabel(role)}</option>
                 ))}
               </select>
             </label>
@@ -1323,7 +1576,7 @@ function DataTab({
                 ))}
               </select>
             </label>
-            <div className="flex items-end gap-2 md:col-span-4">
+            <div className="flex items-end gap-2 md:col-span-6">
               <button
                 type="button"
                 className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1345,13 +1598,31 @@ function DataTab({
 
           <Table
             columns={[
-              { key: "participantId", label: "Participant", sortable: true },
+              { key: "participantId", label: "Participant", sortable: true, render: (recording) => (
+                <div>
+                  <p className="font-medium">{recording.username || recording.participantId}</p>
+                  <p className="text-xs text-neutral-500">{recording.participantId}</p>
+                </div>
+              ) },
+              { key: "dialect", label: "Dialect", sortable: true, render: (recording) => dialectLabel(recording.dialect) },
               { key: "moduleTitle", label: "Group", sortable: true, render: (recording) => recording.moduleTitle || recording.moduleId },
               { key: "sentenceId", label: "Prompt", sortable: true },
+              { key: "promptType", label: "Type", sortable: true, render: (recording) => promptTypeLabel(recording.promptType) },
               { key: "promptEnglish", label: "Prompt text", sortable: true, render: (recording) => <span className="block max-w-md">{recording.promptEnglish || "-"}</span> },
               { key: "transcript", label: "Transcript", sortable: true, render: (recording) => <span className="block max-w-md">{recording.transcript || "-"}</span> },
               { key: "englishTranslation", label: "Translation", sortable: true, render: (recording) => <span className="block max-w-md">{recording.englishTranslation || "-"}</span> },
               { key: "suggestedCorrection", label: "Correction", sortable: true, render: (recording) => recording.correctionFlag ? <span className="block max-w-md text-yellow-200">{recording.suggestedCorrection || "Flagged"}</span> : "-" },
+              {
+                key: "validationCount",
+                label: "Validation",
+                sortable: true,
+                render: (recording) => (
+                  <span className={recording.validationCount ? "text-emerald-300" : "text-neutral-500"}>
+                    {recording.validationCount || 0} vote{recording.validationCount === 1 ? "" : "s"}
+                    {recording.validationCount ? ` · score ${recording.validationScore || 0}` : ""}
+                  </span>
+                ),
+              },
               {
                 key: "audioPath",
                 label: "Audio",
