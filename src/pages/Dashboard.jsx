@@ -365,6 +365,7 @@ const recordedForDialect = allSentences
             <div className="space-y-4">
               <audio src={audioUrl} controls className="w-full" />
 
+              {/* Text prompt optional transcript/correction */}
               {currentCard.prompt_type !== "picture_description" && (
                 <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
                   <summary className="cursor-pointer text-sm font-semibold text-gray-700">
@@ -412,6 +413,42 @@ const recordedForDialect = allSentences
                 </details>
               )}
 
+              {/* Image prompt optional transcript/translation */}
+              {currentCard.media_type === "image" && (
+                <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-700">
+                    Add optional transcript or translation
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        What you said (Burushaski transcript)
+                      </span>
+                      <textarea
+                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                        rows={2}
+                        value={transcript}
+                        onChange={(event) => setTranscript(event.target.value)}
+                        placeholder="Optional Burushaski transcript"
+                      />
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        English translation (optional)
+                      </span>
+                      <textarea
+                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                        rows={2}
+                        value={englishTranslation}
+                        onChange={(event) => setEnglishTranslation(event.target.value)}
+                        placeholder="Optional English translation of what you said"
+                      />
+                    </label>
+                  </div>
+                </details>
+              )}
+
               <div className="flex gap-3">
                 <button
                   onClick={clearRecordingState}
@@ -432,7 +469,6 @@ const recordedForDialect = allSentences
           )}
         </div>
       )}
-
 
       {/* Validation card */}
 {!loading && !error && currentCard?._cardType === "validation" && (
