@@ -59,7 +59,7 @@ const defaultPromptGroups = [
   "Adverbs",
   "Possession",
   "Postpositions",
-  "Admin Prompts",
+  "General Prompts",
   "Image Prompts",
 ];
 
@@ -71,8 +71,8 @@ const participantRoleOptions = [
 
 const emptyPrompt = {
   promptId: "",
-  moduleId: "admin-prompts",
-  moduleTitle: "Admin Prompts",
+  moduleId: "general-prompts",
+  moduleTitle: "General Prompts",
   promptType: "translation",
   legacyPromptType: "",
   dialect: "",
@@ -86,13 +86,6 @@ const emptyPrompt = {
   weight: 1,
   sortOrder: 0,
   active: true,
-};
-
-const emptyBatchPrompt = {
-  groupTitle: "PiSCES Images",
-  dialect: "",
-  english: "Describe what you see in this image in Burushaski.",
-  active: false,
 };
 
 const emptyTask = {
@@ -131,7 +124,7 @@ function uniq(values) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
-function slugify(value, fallback = "admin-prompts") {
+function slugify(value, fallback = "general-prompts") {
   const slug = String(value || "")
     .trim()
     .toLowerCase()
@@ -139,6 +132,11 @@ function slugify(value, fallback = "admin-prompts") {
     .replace(/^-+|-+$/g, "");
 
   return slug || fallback;
+}
+
+function promptGroupLabel(value, fallback = "General Prompts") {
+  const label = String(value || "").trim();
+  return label === "Admin Prompts" ? "General Prompts" : label || fallback;
 }
 
 function promptTypeLabel(value) {
@@ -305,19 +303,22 @@ function PromptsTab({ prompts, onRefresh }) {
   const [form, setForm] = useState(emptyPrompt);
   const [editingId, setEditingId] = useState(null);
   const [filters, setFilters] = useState({ search: "", dialect: "all", type: "all", status: "active" });
-  const [groupMode, setGroupMode] = useState("Admin Prompts");
+  const [groupMode, setGroupMode] = useState("General Prompts");
   const [newGroupTitle, setNewGroupTitle] = useState("");
   const [sort, setSort] = useState({ key: "moduleTitle", direction: "asc" });
   const [error, setError] = useState("");
   const [uploadingMedia, setUploadingMedia] = useState(false);
-  const [batchForm, setBatchForm] = useState(emptyBatchPrompt);
-  const [batchFiles, setBatchFiles] = useState([]);
-  const [batchQueue, setBatchQueue] = useState([]);
-  const [batchUploading, setBatchUploading] = useState(false);
-  const batchInputRef = useRef(null);
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imageQueue, setImageQueue] = useState([]);
+  const imageInputRef = useRef(null);
 
   const promptGroups = useMemo(
-    () => uniq([...defaultPromptGroups, ...prompts.map((prompt) => prompt.moduleTitle || prompt.moduleId)]),
+    () => uniq([
+      ...defaultPromptGroups,
+      ...prompts
+        .map((prompt) => prompt.moduleTitle || prompt.moduleId)
+        .filter((group) => group !== "Admin Prompts"),
+    ]),
     [prompts]
   );
   const filterDialects = useMemo(() => uniq(prompts.map((prompt) => prompt.dialect || "all dialects")), [prompts]);
@@ -326,8 +327,9 @@ function PromptsTab({ prompts, onRefresh }) {
       prompts.filter((prompt) => {
         const dialect = prompt.dialect || "all dialects";
         const status = prompt.active ? "active" : "inactive";
+        const promptForSearch = { ...prompt, moduleTitle: promptGroupLabel(prompt.moduleTitle || prompt.moduleId) };
         return (
-          matchesText(prompt, filters.search, ["promptId", "moduleTitle", "english", "transliteration", "grammaticalCategory"]) &&
+          matchesText(promptForSearch, filters.search, ["promptId", "moduleTitle", "english", "transliteration", "grammaticalCategory"]) &&
           (filters.dialect === "all" || dialect === filters.dialect) &&
           (filters.type === "all" || promptTypeFilterValue(prompt.promptType) === filters.type) &&
           (filters.status === "all" || status === filters.status)
@@ -341,6 +343,7 @@ function PromptsTab({ prompts, onRefresh }) {
       if (key === "dialect") return dialectLabel(prompt.dialect);
       if (key === "active") return prompt.active ? "active" : "inactive";
       if (key === "recordingCount") return Number(prompt.recordingCount || 0);
+      if (key === "moduleTitle") return promptGroupLabel(prompt.moduleTitle || prompt.moduleId);
       return prompt[key] || "";
     };
 
@@ -423,8 +426,13 @@ function PromptsTab({ prompts, onRefresh }) {
   const resetPromptForm = () => {
     setForm(emptyPrompt);
     setEditingId(null);
-    setGroupMode("Admin Prompts");
+    setGroupMode("General Prompts");
     setNewGroupTitle("");
+    setImageFiles([]);
+    setImageQueue([]);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
   };
 
   const save = async (event) => {
@@ -432,7 +440,7 @@ function PromptsTab({ prompts, onRefresh }) {
     setError("");
 
     try {
-      const groupTitle = (groupMode === "__new__" ? newGroupTitle : form.moduleTitle).trim() || "Admin Prompts";
+      const groupTitle = promptGroupLabel(groupMode === "__new__" ? newGroupTitle : form.moduleTitle);
       const payload = {
         ...form,
         promptId: form.promptId || undefined,
@@ -454,7 +462,61 @@ function PromptsTab({ prompts, onRefresh }) {
       };
 
       if (editingId) {
-        await updatePrompt(editingId, payload);
+        if (imageFiles.length > 1) {
+          setError("Choose one image when editing an existing prompt. Multiple images create new prompts.");
+          return;
+        }
+
+        const media = imageFiles.length ? await uploadPromptMedia(imageFiles[0]) : null;
+        await updatePrompt(editingId, {
+          ...payload,
+          mediaUrl: media ? media.path || media.signedUrl || "" : payload.mediaUrl,
+        });
+      } else if (form.promptType === "picture_description" && imageFiles.length) {
+        setUploadingMedia(true);
+        setImageQueue(imageFiles.map((file) => ({ name: file.name, status: "Queued" })));
+
+        let succeeded = 0;
+        const results = [];
+
+        for (const file of imageFiles) {
+          setImageQueue((current) =>
+            current.map((item) => item.name === file.name ? { ...item, status: "Uploading image" } : item)
+          );
+
+          try {
+            const media = await uploadPromptMedia(file);
+            setImageQueue((current) =>
+              current.map((item) => item.name === file.name ? { ...item, status: "Creating prompt" } : item)
+            );
+
+            await createPrompt({
+              ...payload,
+              promptId: undefined,
+              mediaUrl: media.path || media.signedUrl || "",
+            });
+
+            succeeded += 1;
+            results.push({ name: file.name, status: "Done" });
+            setImageQueue((current) =>
+              current.map((item) => item.name === file.name ? { ...item, status: "Done" } : item)
+            );
+          } catch (err) {
+            const message = err.message || "Failed";
+            results.push({ name: file.name, status: message });
+            setImageQueue((current) =>
+              current.map((item) => item.name === file.name ? { ...item, status: message } : item)
+            );
+          }
+        }
+
+        setUploadingMedia(false);
+        setImageQueue(results);
+        if (succeeded !== imageFiles.length) {
+          setError(`${succeeded} of ${imageFiles.length} image prompts were created. Review the queue for failed files.`);
+          if (succeeded > 0) await onRefresh();
+          return;
+        }
       } else {
         await createPrompt(payload);
       }
@@ -462,6 +524,7 @@ function PromptsTab({ prompts, onRefresh }) {
       resetPromptForm();
       await onRefresh();
     } catch (err) {
+      setUploadingMedia(false);
       setError(err.message || "Unable to save prompt.");
     }
   };
@@ -475,8 +538,13 @@ function PromptsTab({ prompts, onRefresh }) {
       promptType: prompt.promptType === "picture_description" ? "picture_description" : "translation",
       mediaUrl: prompt.mediaPath || prompt.mediaUrl || "",
     });
-    setGroupMode(prompt.moduleTitle || "Admin Prompts");
+    setGroupMode(promptGroupLabel(prompt.moduleTitle));
     setNewGroupTitle("");
+    setImageFiles([]);
+    setImageQueue([]);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
     setError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -492,102 +560,16 @@ function PromptsTab({ prompts, onRefresh }) {
     }
   };
 
-  const uploadMedia = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setError("");
-    setUploadingMedia(true);
-    try {
-      const media = await uploadPromptMedia(file);
-      setForm({ ...form, mediaType: "image", mediaUrl: media.path || media.signedUrl || "" });
-    } catch (err) {
-      setError(err.message || "Unable to upload image.");
-    } finally {
-      setUploadingMedia(false);
-      event.target.value = "";
-    }
+  const updateImageFiles = (event) => {
+    setImageFiles(Array.from(event.target.files || []));
+    setImageQueue([]);
   };
 
-  const updateBatchFiles = (event) => {
-    setBatchFiles(Array.from(event.target.files || []));
-    setBatchQueue([]);
-  };
-
-  const clearBatch = () => {
-    setBatchFiles([]);
-    setBatchQueue([]);
-    if (batchInputRef.current) {
-      batchInputRef.current.value = "";
-    }
-  };
-
-  const uploadBatch = async () => {
-    if (!batchFiles.length || batchUploading) return;
-
-    const groupTitle = batchForm.groupTitle.trim() || "PiSCES Images";
-    const promptText = batchForm.english.trim();
-    if (!promptText) {
-      setError("Batch image prompts need volunteer-facing text.");
-      return;
-    }
-
-    setError("");
-    setBatchUploading(true);
-    setBatchQueue(batchFiles.map((file) => ({ name: file.name, status: "Queued" })));
-
-    let succeeded = 0;
-    const results = [];
-
-    for (const file of batchFiles) {
-      setBatchQueue((current) =>
-        current.map((item) => item.name === file.name ? { ...item, status: "Uploading image" } : item)
-      );
-
-      try {
-        const media = await uploadPromptMedia(file);
-        setBatchQueue((current) =>
-          current.map((item) => item.name === file.name ? { ...item, status: "Creating prompt" } : item)
-        );
-
-        await createPrompt({
-          moduleTitle: groupTitle,
-          moduleId: slugify(groupTitle, "pisces-images"),
-          grammaticalCategory: groupTitle,
-          curriculumStage: groupTitle,
-          promptType: "picture_description",
-          dialect: batchForm.dialect,
-          english: promptText,
-          transliteration: "",
-          mediaType: "image",
-          mediaUrl: media.path || media.signedUrl || "",
-          difficulty: "medium",
-          weight: 1,
-          sortOrder: 0,
-          active: batchForm.active,
-        });
-
-        succeeded += 1;
-        results.push({ name: file.name, status: "Done" });
-        setBatchQueue((current) =>
-          current.map((item) => item.name === file.name ? { ...item, status: "Done" } : item)
-        );
-      } catch (err) {
-        const message = err.message || "Failed";
-        results.push({ name: file.name, status: message });
-        setBatchQueue((current) =>
-          current.map((item) => item.name === file.name ? { ...item, status: message } : item)
-        );
-      }
-    }
-
-    setBatchUploading(false);
-    setBatchQueue(results);
-    if (succeeded > 0) {
-      await onRefresh();
-    }
-    if (succeeded !== batchFiles.length) {
-      setError(`${succeeded} of ${batchFiles.length} image prompts were created. Review the queue for failed files.`);
+  const clearImageFiles = () => {
+    setImageFiles([]);
+    setImageQueue([]);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
     }
   };
 
@@ -713,28 +695,70 @@ function PromptsTab({ prompts, onRefresh }) {
                 className="input-field"
                 name="media-url"
                 autoComplete="off"
-                placeholder="Paste a public image URL, or upload a local image below"
+                placeholder="Paste one public image URL, or upload local image files below"
                 value={form.mediaUrl}
                 onChange={(event) => setForm({ ...form, mediaUrl: event.target.value })}
               />
             </label>
             <div className="flex flex-wrap items-center gap-3">
-            <label className="rounded bg-neutral-800 px-3 py-2 text-sm text-white hover:bg-neutral-700">
-              {uploadingMedia ? "Uploading..." : "Upload local image"}
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.bmp"
-                className="hidden"
-                disabled={uploadingMedia}
-                onChange={uploadMedia}
-              />
-            </label>
-            {isHttpUrl(form.mediaUrl) && (
-              <a className="text-sm text-yellow-300 underline" href={form.mediaUrl} target="_blank" rel="noreferrer">
-                Open current media
-              </a>
-            )}
+              <label className="rounded bg-neutral-800 px-3 py-2 text-sm text-white hover:bg-neutral-700">
+                {uploadingMedia ? "Uploading..." : imageFiles.length ? `${imageFiles.length} image${imageFiles.length === 1 ? "" : "s"} selected` : "Upload image files"}
+                <input
+                  type="file"
+                  multiple={!editingId}
+                  ref={imageInputRef}
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.bmp"
+                  className="hidden"
+                  disabled={uploadingMedia}
+                  onChange={updateImageFiles}
+                />
+              </label>
+              {(imageFiles.length > 0 || imageQueue.length > 0) && (
+                <button
+                  type="button"
+                  className="rounded bg-neutral-800 px-3 py-2 text-sm text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={uploadingMedia}
+                  onClick={clearImageFiles}
+                >
+                  Clear images
+                </button>
+              )}
+              {isHttpUrl(form.mediaUrl) && (
+                <a className="text-sm text-yellow-300 underline" href={form.mediaUrl} target="_blank" rel="noreferrer">
+                  Open current media
+                </a>
+              )}
             </div>
+            {imageFiles.length > 1 && (
+              <p className="text-xs text-neutral-500">
+                These {imageFiles.length} images will be saved as separate prompts with the same group, dialect, visibility, and volunteer text.
+              </p>
+            )}
+            {editingId && imageFiles.length > 1 && (
+              <p className="text-xs text-yellow-200">Editing accepts one replacement image at a time.</p>
+            )}
+            {imageQueue.length > 0 && (
+              <div className="max-h-56 overflow-auto rounded-md border border-neutral-800 bg-neutral-950/70">
+                <table className="min-w-full divide-y divide-neutral-800 text-sm">
+                  <thead className="bg-neutral-950 text-left text-xs uppercase text-neutral-500">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">File</th>
+                      <th className="px-3 py-2 font-semibold">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-800">
+                    {imageQueue.map((item, index) => (
+                      <tr key={`${item.name}-${index}`}>
+                        <td className="px-3 py-2 text-neutral-300">{item.name}</td>
+                        <td className={`px-3 py-2 ${item.status === "Done" ? "text-emerald-300" : item.status === "Queued" || item.status.includes("ing") ? "text-yellow-300" : "text-red-300"}`}>
+                          {item.status}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -742,12 +766,13 @@ function PromptsTab({ prompts, onRefresh }) {
           <button
             className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={
+              uploadingMedia ||
               !form.english ||
               (groupMode === "__new__" && !newGroupTitle.trim()) ||
-              (form.promptType === "picture_description" && !form.mediaUrl)
+              (form.promptType === "picture_description" && !form.mediaUrl && !imageFiles.length)
             }
           >
-            {editingId ? "Save Changes" : "Add Prompt"}
+            {uploadingMedia ? "Uploading..." : editingId ? "Save Changes" : imageFiles.length > 1 ? `Add ${imageFiles.length} Prompts` : "Add Prompt"}
           </button>
           {editingId && (
             <button type="button" className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700" onClick={resetPromptForm}>
@@ -756,112 +781,6 @@ function PromptsTab({ prompts, onRefresh }) {
           )}
         </div>
       </form>
-
-      <section className="space-y-4 rounded-lg border border-neutral-800 bg-neutral-900/80 p-4 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-white">Batch image prompts</h3>
-            <p className="text-xs text-neutral-500">
-              Upload many images with the same instruction. Each image becomes its own prompt for volunteers.
-            </p>
-          </div>
-          <Badge tone={batchForm.active ? "green" : "neutral"}>{batchForm.active ? "Active" : "Draft"}</Badge>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-4">
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Prompt group</span>
-            <input
-              className="input-field"
-              value={batchForm.groupTitle}
-              onChange={(event) => setBatchForm({ ...batchForm, groupTitle: event.target.value })}
-            />
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Dialect</span>
-            <select className="select-field" value={batchForm.dialect} onChange={(event) => setBatchForm({ ...batchForm, dialect: event.target.value })}>
-              {dialectOptions.map((option) => (
-                <option key={option.value || "batch-all"} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Visibility</span>
-            <select className="select-field" value={batchForm.active ? "true" : "false"} onChange={(event) => setBatchForm({ ...batchForm, active: event.target.value === "true" })}>
-              <option value="false">Draft / hidden</option>
-              <option value="true">Active for volunteers</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Images</span>
-            <input
-              type="file"
-              multiple
-              ref={batchInputRef}
-              accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.bmp"
-              className="input-field"
-              disabled={batchUploading}
-              onChange={updateBatchFiles}
-            />
-          </label>
-        </div>
-
-        <label className="block space-y-1 text-xs text-neutral-400">
-          <span>Volunteer sees</span>
-          <textarea
-            className="input-field min-h-20"
-            value={batchForm.english}
-            onChange={(event) => setBatchForm({ ...batchForm, english: event.target.value })}
-          />
-        </label>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={batchUploading || !batchFiles.length || !batchForm.english.trim()}
-            onClick={uploadBatch}
-          >
-            {batchUploading ? "Uploading..." : `Create ${batchFiles.length || ""} image prompt${batchFiles.length === 1 ? "" : "s"}`}
-          </button>
-          <button
-            type="button"
-            className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={batchUploading || (!batchFiles.length && !batchQueue.length)}
-            onClick={clearBatch}
-          >
-            Clear batch
-          </button>
-          {batchFiles.length > 0 && (
-            <p className="text-sm text-neutral-500">{batchFiles.length} file{batchFiles.length === 1 ? "" : "s"} selected</p>
-          )}
-        </div>
-
-        {batchQueue.length > 0 && (
-          <div className="max-h-56 overflow-auto rounded-md border border-neutral-800 bg-neutral-950/70">
-            <table className="min-w-full divide-y divide-neutral-800 text-sm">
-              <thead className="bg-neutral-950 text-left text-xs uppercase text-neutral-500">
-                <tr>
-                  <th className="px-3 py-2 font-semibold">File</th>
-                  <th className="px-3 py-2 font-semibold">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {batchQueue.map((item, index) => (
-                  <tr key={`${item.name}-${index}`}>
-                    <td className="px-3 py-2 text-neutral-300">{item.name}</td>
-                    <td className={`px-3 py-2 ${item.status === "Done" ? "text-emerald-300" : item.status === "Queued" || item.status.includes("ing") ? "text-yellow-300" : "text-red-300"}`}>
-                      {item.status}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
 
       <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-5">
         <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
@@ -901,7 +820,7 @@ function PromptsTab({ prompts, onRefresh }) {
       <Table
         columns={[
           { key: "promptId", label: "Prompt", sortable: true, render: (prompt) => <span className="font-mono text-xs">{prompt.promptId}</span> },
-          { key: "moduleTitle", label: "Group", sortable: true },
+          { key: "moduleTitle", label: "Group", sortable: true, render: (prompt) => promptGroupLabel(prompt.moduleTitle || prompt.moduleId) },
           { key: "english", label: "Volunteer sees", sortable: true, render: (prompt) => <span className="block max-w-md text-neutral-300">{prompt.english}</span> },
           { key: "promptType", label: "Type", sortable: true, render: (prompt) => <Badge tone={prompt.promptType === "picture_description" ? "blue" : "neutral"}>{promptTypeLabel(prompt.promptType)}</Badge> },
           { key: "dialect", label: "Dialect", sortable: true, render: (prompt) => dialectLabel(prompt.dialect) },
@@ -1414,7 +1333,7 @@ function ContentCreatorTab({ users, recordsPage }) {
       <Table
         columns={[
           { key: "participantId", label: "Participant" },
-          { key: "moduleTitle", label: "Group", render: (recording) => recording.moduleTitle || recording.moduleId },
+          { key: "moduleTitle", label: "Group", render: (recording) => promptGroupLabel(recording.moduleTitle || recording.moduleId) },
           { key: "promptEnglish", label: "Prompt text", render: (recording) => <span className="block max-w-md">{recording.promptEnglish || "-"}</span> },
           { key: "audioPath", label: "Audio path", render: (recording) => <span className="font-mono text-xs">{recording.audioPath}</span> },
           { key: "createdAt", label: "Created" },
@@ -1605,7 +1524,7 @@ function DataTab({
                 </div>
               ) },
               { key: "dialect", label: "Dialect", sortable: true, render: (recording) => dialectLabel(recording.dialect) },
-              { key: "moduleTitle", label: "Group", sortable: true, render: (recording) => recording.moduleTitle || recording.moduleId },
+              { key: "moduleTitle", label: "Group", sortable: true, render: (recording) => promptGroupLabel(recording.moduleTitle || recording.moduleId) },
               { key: "sentenceId", label: "Prompt", sortable: true },
               { key: "promptType", label: "Type", sortable: true, render: (recording) => promptTypeLabel(recording.promptType) },
               { key: "promptEnglish", label: "Prompt text", sortable: true, render: (recording) => <span className="block max-w-md">{recording.promptEnglish || "-"}</span> },
@@ -1614,13 +1533,25 @@ function DataTab({
               { key: "suggestedCorrection", label: "Correction", sortable: true, render: (recording) => recording.correctionFlag ? <span className="block max-w-md text-yellow-200">{recording.suggestedCorrection || "Flagged"}</span> : "-" },
               {
                 key: "validationCount",
-                label: "Validation",
+                label: "Validation received",
                 sortable: true,
                 render: (recording) => (
-                  <span className={recording.validationCount ? "text-emerald-300" : "text-neutral-500"}>
-                    {recording.validationCount || 0} vote{recording.validationCount === 1 ? "" : "s"}
-                    {recording.validationCount ? ` · score ${recording.validationScore || 0}` : ""}
-                  </span>
+                  <div className={recording.validationCount ? "space-y-1 text-emerald-300" : "text-neutral-500"}>
+                    <p>
+                      {recording.validationCount || 0} received · Yes {recording.validationYes || 0} · No {recording.validationNo || 0}
+                    </p>
+                    {recording.validationCount > 0 && <p className="text-xs text-neutral-400">Score {recording.validationScore || 0}</p>}
+                    {(recording.validations || []).length > 0 && (
+                      <div className="space-y-0.5 text-xs text-neutral-400">
+                        {(recording.validations || []).slice(0, 3).map((validation, index) => (
+                          <p key={`${validation.validatorId || validation.validatorUsername}-${index}`}>
+                            {validation.validatorUsername || validation.validatorId}: {validation.vote === "yes" ? "accepted" : validation.vote === "no" ? "rejected" : "neutral"}
+                          </p>
+                        ))}
+                        {recording.validations.length > 3 && <p>+{recording.validations.length - 3} more</p>}
+                      </div>
+                    )}
+                  </div>
                 ),
               },
               {
@@ -1722,7 +1653,7 @@ function DataTab({
 
           <Table
             columns={[
-              { key: "moduleTitle", label: "Group", sortable: true },
+              { key: "moduleTitle", label: "Group", sortable: true, render: (group) => promptGroupLabel(group.moduleTitle || group.moduleId) },
               { key: "promptId", label: "Prompt", sortable: true },
               { key: "currentPrompt", label: "Current volunteer text", sortable: true, render: (group) => <span className="block max-w-md">{group.currentPrompt || "-"}</span> },
               { key: "count", label: "Corrections", sortable: true },
@@ -1782,7 +1713,7 @@ function DataTab({
           <Table
             columns={[
               { key: "participantId", label: "Participant" },
-              { key: "moduleTitle", label: "Group" },
+              { key: "moduleTitle", label: "Group", render: (correction) => promptGroupLabel(correction.moduleTitle || correction.moduleId) },
               { key: "promptId", label: "Prompt" },
               { key: "correction", label: "Suggested correction", render: (correction) => <span className="block max-w-md">{correction.correction}</span> },
               { key: "createdAt", label: "Created" },

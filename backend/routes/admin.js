@@ -430,6 +430,7 @@ function recordingToClient(row) {
     validationCount: row.validation_count || 0,
     validationYes: row.validation_yes || 0,
     validationNo: row.validation_no || 0,
+    validations: row.validations || [],
   };
 }
 
@@ -457,8 +458,8 @@ function promptPayload(body, admin) {
 
   return {
     ...(body.promptId !== undefined ? { prompt_id: cleanText(body.promptId) } : {}),
-    ...(body.moduleId !== undefined ? { module_id: cleanText(body.moduleId) || "admin-prompts" } : {}),
-    ...(body.moduleTitle !== undefined ? { module_title: cleanText(body.moduleTitle) || "Admin Prompts" } : {}),
+    ...(body.moduleId !== undefined ? { module_id: cleanText(body.moduleId) || "general-prompts" } : {}),
+    ...(body.moduleTitle !== undefined ? { module_title: cleanText(body.moduleTitle) || "General Prompts" } : {}),
     ...(body.promptType !== undefined ? { prompt_type: cleanText(body.promptType) || "translation" } : {}),
     ...(body.dialect !== undefined ? { dialect: cleanText(body.dialect) } : {}),
     ...(body.english !== undefined ? { english } : {}),
@@ -524,11 +525,11 @@ function promptsToModules(rows) {
   const modules = new Map();
 
   rows.forEach((row) => {
-    const moduleId = row.module_id || "admin-prompts";
+    const moduleId = row.module_id || "general-prompts";
     if (!modules.has(moduleId)) {
       modules.set(moduleId, {
         moduleId,
-        title: row.module_title || "Admin Prompts",
+        title: row.module_title || "General Prompts",
         sentences: [],
       });
     }
@@ -1477,15 +1478,38 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
     if (recordingIds.length) {
       const { data: validations, error: validationError } = await supabase
         .from("validations")
-        .select("recording_id, vote")
+        .select("recording_id, validator_id, vote, created_at")
         .in("recording_id", recordingIds);
 
       if (!validationError) {
+        const validatorIds = Array.from(new Set((validations || []).map((validation) => validation.validator_id).filter(Boolean)));
+        let validatorMap = new Map();
+        if (validatorIds.length) {
+          const { data: validatorRows, error: validatorError } = await supabase
+            .from("app_users")
+            .select("participant_id, username, role")
+            .in("participant_id", validatorIds);
+
+          if (!validatorError) {
+            validatorMap = new Map((validatorRows || []).map((user) => [user.participant_id, user]));
+          } else {
+            console.warn("Admin validation voter names unavailable:", validatorError.message);
+          }
+        }
+
         (validations || []).forEach((validation) => {
-          const current = validationMap.get(validation.recording_id) || { count: 0, yes: 0, no: 0 };
+          const current = validationMap.get(validation.recording_id) || { count: 0, yes: 0, no: 0, items: [] };
+          const validator = validatorMap.get(validation.validator_id) || {};
           current.count += 1;
           if (Number(validation.vote) > 0) current.yes += 1;
           if (Number(validation.vote) < 0) current.no += 1;
+          current.items.push({
+            validatorId: validation.validator_id || "",
+            validatorUsername: validator.username || validation.validator_id || "Unknown validator",
+            validatorRole: validator.role || "",
+            vote: Number(validation.vote) > 0 ? "yes" : Number(validation.vote) < 0 ? "no" : "neutral",
+            createdAt: validation.created_at || "",
+          });
           validationMap.set(validation.recording_id, current);
         });
       } else {
@@ -1513,6 +1537,7 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
           validation_count: validation.count || 0,
           validation_yes: validation.yes || 0,
           validation_no: validation.no || 0,
+          validations: validation.items || [],
         });
       }));
 
@@ -1673,7 +1698,7 @@ router.post(
         "image/x-ms-bmp": "bmp",
       }[contentType];
       const fileName = cleanFileName(req.get("x-file-name"));
-      const path = `admin-prompts/${Date.now()}-${cryptoRandomId()}-${fileName}.${extension}`;
+      const path = `prompt-images/${Date.now()}-${cryptoRandomId()}-${fileName}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
         .from("prompt-media")
@@ -1752,8 +1777,8 @@ router.post("/admin/prompts", requireAdmin, async (req, res) => {
     }
 
     payload.prompt_id = payload.prompt_id || generatePromptId(payload);
-    payload.module_id = payload.module_id || slugify(payload.module_title, "admin-prompts");
-    payload.module_title = payload.module_title || "Admin Prompts";
+    payload.module_id = payload.module_id || slugify(payload.module_title, "general-prompts");
+    payload.module_title = payload.module_title || "General Prompts";
     payload.media_type = payload.prompt_type === "picture_description" ? "image" : payload.media_type || "none";
     payload.difficulty = payload.difficulty || "short";
     payload.weight = payload.weight || 1;

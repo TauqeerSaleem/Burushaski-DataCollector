@@ -114,8 +114,8 @@ create table if not exists public.admin_activity_logs (
 create table if not exists public.prompt_bank (
   id uuid primary key default gen_random_uuid(),
   prompt_id text not null,
-  module_id text not null default 'admin-prompts',
-  module_title text not null default 'Admin Prompts',
+  module_id text not null default 'general-prompts',
+  module_title text not null default 'General Prompts',
   prompt_type text not null default 'translation'
     check (prompt_type in ('translation', 'elicitation', 'picture_description', 'validation', 'gamified')),
   dialect text,
