@@ -7,14 +7,15 @@ const ADMIN_KEY = "burushaski_admin";
 
 async function request(path, options = {}) {
   const token = getAdminToken();
+  const { headers: optionHeaders, ...fetchOptions } = options;
   const headers = {
     ...(options.body instanceof Blob ? {} : { "Content-Type": "application/json" }),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers || {}),
+    ...(optionHeaders || {}),
   };
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...fetchOptions,
     headers,
-    ...options,
   });
 
   if (response.status === 204) return null;
