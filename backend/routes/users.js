@@ -1,12 +1,26 @@
 import crypto from "node:crypto";
 import express from "express";
 import { hasServiceRoleKey, hasSupabaseConfig, supabase } from "../supabaseClient.js";
-import { normalizeUserRole } from "../utils/roles.js";
+import { USER_ROLES, normalizeUserRole } from "../utils/roles.js";
 
 const router = express.Router();
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9._-]{3,32}$/;
 const LEGACY_PARTICIPANT_ID_PATTERN = /^P-\d+$/i;
+const APP_USER_WRITE_COLUMNS = new Set([
+  "participant_id",
+  "username",
+  "display_name",
+  "role",
+  "dialect",
+  "gender",
+  "age",
+  "other_languages",
+  "place_of_birth",
+  "places_lived",
+  "consent_accepted",
+  "updated_at",
+]);
 
 function requireServiceRole(res) {
   if (!hasSupabaseConfig || !supabase) {
@@ -108,29 +122,26 @@ function toClientUser(row) {
 function userPayload(body, { includeParticipantId = false } = {}) {
   const username = normalizeUsername(body.username);
 
-  return {
+  const payload = {
     ...(includeParticipantId
       ? { participant_id: createParticipantId(username) }
       : {}),
     username,
     role: normalizeUserRole(body.role),
     display_name: cleanText(body.name || body.displayName),
-    contact_preference: cleanText(body.contactPreference || body.contact_preference),
-    email: cleanText(body.email),
-    mobile_number: cleanText(body.mobileNumber || body.mobile_number),
     dialect: cleanText(body.dialect),
-    dialects: cleanArray(body.dialects),
-    other_dialect: cleanText(body.otherDialect || body.other_dialect),
     gender: cleanText(body.gender),
     age: cleanText(body.age),
-    other_language_count: cleanText(body.otherLanguageCount || body.other_language_count),
     other_languages: cleanArray(body.otherLanguages || body.other_languages),
-    comfort_language: cleanText(body.comfortLanguage || body.comfort_language),
     place_of_birth: cleanText(body.placeOfBirth || body.place_of_birth),
     places_lived: cleanArray(body.placesLived || body.places_lived),
     consent_accepted: Boolean(body.consentAccepted || body.consent_accepted),
     updated_at: new Date().toISOString(),
   };
+
+  return Object.fromEntries(
+    Object.entries(payload).filter(([column]) => APP_USER_WRITE_COLUMNS.has(column))
+  );
 }
 
 function profileUpdatePayload(body) {
@@ -157,7 +168,9 @@ router.post("/users/signup", async (req, res) => {
       });
     }
 
-    if (!req.body.consentAccepted && !req.body.consent_accepted) {
+    const role = normalizeUserRole(req.body.role);
+
+    if (role !== USER_ROLES.RESEARCHER && !req.body.consentAccepted && !req.body.consent_accepted) {
       return res.status(400).json({ error: "Consent must be accepted to sign up." });
     }
 

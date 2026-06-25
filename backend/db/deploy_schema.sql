@@ -167,6 +167,20 @@ create table if not exists public.research_tasks (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.contributions (
+  id uuid default gen_random_uuid() primary key,
+  username text not null,
+  role text not null,
+  content_type text not null,
+  media_url text,
+  description text,
+  language_notes text,
+  speaker_metadata text,
+  turn_taking_notes text,
+  status text default 'pending',
+  created_at timestamp default now()
+);
+
 alter table public.app_users
 add column if not exists active boolean not null default true;
 
@@ -235,6 +249,8 @@ create index if not exists prompt_correction_reviews_created_idx
 on public.prompt_correction_reviews (created_at);
 create index if not exists research_tasks_status_idx on public.research_tasks (status);
 create index if not exists research_tasks_assigned_idx on public.research_tasks (assigned_to);
+create index if not exists contributions_username_created_idx
+on public.contributions (username, created_at desc);
 
 create or replace view public.prompt_recording_counts
 with (security_invoker = true)
@@ -323,6 +339,7 @@ alter table public.admin_activity_logs enable row level security;
 alter table public.prompt_bank enable row level security;
 alter table public.prompt_correction_reviews enable row level security;
 alter table public.research_tasks enable row level security;
+alter table public.contributions enable row level security;
 
 drop policy if exists "anon can insert recordings" on public.recordings;
 drop policy if exists "anon can insert feedback" on public.feedback;

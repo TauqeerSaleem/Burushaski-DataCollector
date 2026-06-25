@@ -81,3 +81,21 @@ export async function updateUserProfile(username, profile) {
 
   return normalizeApiUser(data.user);
 }
+
+export async function createContribution(contribution) {
+  const data = await request("/api/contributions", {
+    method: "POST",
+    body: JSON.stringify(contribution),
+  });
+
+  return data.contribution;
+}
+
+export async function getUserContributions(username) {
+  const data = await request(`/api/contributions/${encodeURIComponent(username)}`, {
+    method: "GET",
+    retries: 1,
+  });
+
+  return data.contributions || [];
+}

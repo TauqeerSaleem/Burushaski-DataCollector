@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Navigate, useNavigate, Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
+import { subscribeToPush } from "../hooks/usePushNotifications";
 import { USER_ROLES } from "../utils/roles";
-import { saveSignupDraft } from "../utils/signupDraft";
+import { signupUser } from "../utils/userApi";
+import { clearSignupDraft, draftToSignupPayload, saveSignupDraft } from "../utils/signupDraft";
 
 const COUNTRIES = [
   "Afghanistan","Albania","Algeria","Andorra","Angola","Argentina","Armenia","Australia","Austria","Azerbaijan",
@@ -25,6 +27,7 @@ const COUNTRIES = [
 ];
 
 export default function Signup() {
+  const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [usernameError, setUsernameError] = useState("");
 
@@ -58,8 +61,10 @@ export default function Signup() {
   const [livedCityError, setLivedCityError] = useState("");
   const [placesLived, setPlacesLived] = useState([]);
   const [placesLivedError, setPlacesLivedError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const { user } = useUser();
+  const { user, setUser } = useUser();
   const navigate = useNavigate();
 
   if (user) {
@@ -171,13 +176,18 @@ export default function Signup() {
     return dialects[0] || "";
   };
 
-  const canSubmit =
+  const isResearcher = role === USER_ROLES.RESEARCHER;
+
+  const hasBasicInfo =
+    (!isResearcher || name.trim()) &&
     username &&
     validateUsername(username) &&
     role &&
     contactPref &&
     (contactPref !== "email" || (email && validateEmail(email))) &&
-    (contactPref !== "mobile" || (mobile && validateMobile(mobile))) &&
+    (contactPref !== "mobile" || (mobile && validateMobile(mobile)));
+
+  const hasCrowdsourcedInfo =
     ageGroup &&
     gender &&
     dialects.length > 0 &&
@@ -189,10 +199,13 @@ export default function Signup() {
     validateCityName(birthCity) &&
     placesLived.length > 0;
 
-  const submit = () => {
+  const canSubmit = hasBasicInfo && (isResearcher || hasCrowdsourcedInfo) && !submitting;
+
+  const submit = async () => {
     if (!canSubmit) return;
 
     const draft = {
+      name: name.trim(),
       username,
       dialect: primaryDialect(),
       gender,
@@ -209,6 +222,31 @@ export default function Signup() {
       birthplace: { country: birthCountry, city: birthCity.trim() },
       placesLived,
     };
+
+    if (isResearcher) {
+      setSubmitError("");
+      setSubmitting(true);
+
+      try {
+        const researcher = await signupUser({
+          ...draftToSignupPayload(draft),
+          consentAccepted: false,
+        });
+        clearSignupDraft();
+        setUser(researcher);
+
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          await subscribeToPush(researcher);
+        }
+
+        navigate("/dashboard", { replace: true });
+      } catch (err) {
+        setSubmitError(err.message || "Unable to complete signup.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
 
     saveSignupDraft(draft);
     navigate("/consent");
@@ -229,8 +267,9 @@ export default function Signup() {
               Help us record Burushaski sentences
             </p>
             <p className="text-xs text-gray-500 leading-relaxed">
-              We are collecting short audio recordings of Burushaski speech
-              along with basic demographic information for academic research.
+              {isResearcher
+                ? "Create your researcher access profile for the project dashboard."
+                : "We are collecting short audio recordings of Burushaski speech along with basic demographic information for academic research."}
             </p>
           </div>
 
@@ -281,6 +320,21 @@ export default function Signup() {
           </div>
 
           <div className="space-y-4">
+
+            {/* Name */}
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">
+                Name {isResearcher ? "*" : "(optional)"}
+              </label>
+              <input
+                type="text"
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Your name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
+              />
+            </div>
 
             {/* Username */}
             <div className="space-y-1">
@@ -361,6 +415,8 @@ export default function Signup() {
               </div>
             )}
 
+            {!isResearcher && (
+              <>
             {/* Age group */}
             <div className="space-y-1">
               <label className="text-xs text-gray-400">What is your age group? *</label>
@@ -562,14 +618,22 @@ export default function Signup() {
               />
               {comfortLangError && <p className="text-xs text-red-400">{comfortLangError}</p>}
             </div>
+              </>
+            )}
           </div>
+
+          {submitError && <p className="text-xs text-red-400">{submitError}</p>}
 
           <button
             onClick={submit}
             disabled={!canSubmit}
             className="w-full rounded-lg bg-yellow-400 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Next: Review Consent Form
+            {submitting
+              ? "Creating account..."
+              : isResearcher
+                ? "Create Account"
+                : "Next: Review Consent Form"}
           </button>
 
           <p className="text-center text-xs text-gray-500">
