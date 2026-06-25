@@ -39,26 +39,25 @@ export default function Signup() {
   const [mobile, setMobile] = useState("");
   const [mobileError, setMobileError] = useState("");
 
-  const [ageGroup, setAgeGroup] = useState("");
+  const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
 
-  const [dialects, setDialects] = useState([]);
-  const [otherDialect, setOtherDialect] = useState("");
+  const [dialect, setDialect] = useState("");
 
-  const [numOtherLangs, setNumOtherLangs] = useState("");
-  const [numOtherLangsError, setNumOtherLangsError] = useState("");
-
-  const [otherLangs, setOtherLangs] = useState("");
+  const [otherLangs, setOtherLangs] = useState([]);
+  const [otherLangsOther, setOtherLangsOther] = useState("");
   const [comfortLang, setComfortLang] = useState("");
-  const [comfortLangError, setComfortLangError] = useState("");
 
-  const [birthCountry, setBirthCountry] = useState("");
-  const [birthCity, setBirthCity] = useState("");
-  const [birthCityError, setBirthCityError] = useState("");
+  const [originCountry, setOriginCountry] = useState("Pakistan");
+  const [originCity, setOriginCity] = useState("");
+  const [originCityError, setOriginCityError] = useState("");
+  const [originLocality, setOriginLocality] = useState("");
 
-  const [livedCountry, setLivedCountry] = useState("");
+  const [livedCountry, setLivedCountry] = useState("Pakistan");
   const [livedCity, setLivedCity] = useState("");
   const [livedCityError, setLivedCityError] = useState("");
+  const [livedLocality, setLivedLocality] = useState("");
+  const [livedTimeLived, setLivedTimeLived] = useState("");
   const [placesLived, setPlacesLived] = useState([]);
   const [placesLivedError, setPlacesLivedError] = useState("");
   const [submitError, setSubmitError] = useState("");
@@ -71,10 +70,11 @@ export default function Signup() {
     return <Navigate to="/dashboard" replace />;
   }
 
+  const isResearcher = role === USER_ROLES.RESEARCHER;
+
   const validateUsername = (val) => /^[a-zA-Z0-9._-]{3,32}$/.test(val);
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
   const validateMobile = (val) => /^03\d{2}-?\d{7}$/.test(val.replace(/\s/g, ""));
-  const validateNumber = (val) => /^\d+$/.test(val);
   const validateCityName = (val) => /^[A-Za-z\s'.-]{2,}$/.test(val.trim());
 
   const handleUsernameChange = (e) => {
@@ -107,33 +107,19 @@ export default function Signup() {
     }
   };
 
-  const handleNumOtherLangsChange = (e) => {
-    const value = e.target.value;
-    setNumOtherLangs(value);
-    if (value && !validateNumber(value)) {
-      setNumOtherLangsError("Must be a number");
-    } else {
-      setNumOtherLangsError("");
-    }
+  const toggleOtherLang = (lang) => {
+    setOtherLangs((prev) =>
+      prev.includes(lang) ? prev.filter((l) => l !== lang) : [...prev, lang]
+    );
   };
 
-  const handleComfortLangChange = (e) => {
+  const handleOriginCityChange = (e) => {
     const value = e.target.value;
-    setComfortLang(value);
-    if (value && otherLangs && !otherLangs.toLowerCase().includes(value.toLowerCase())) {
-      setComfortLangError("Should be one of the languages you listed above");
-    } else {
-      setComfortLangError("");
-    }
-  };
-
-  const handleBirthCityChange = (e) => {
-    const value = e.target.value;
-    setBirthCity(value);
+    setOriginCity(value);
     if (value && !validateCityName(value)) {
-      setBirthCityError("Enter a valid city name");
+      setOriginCityError("Enter a valid city name");
     } else {
-      setBirthCityError("");
+      setOriginCityError("");
     }
   };
 
@@ -147,36 +133,65 @@ export default function Signup() {
     }
   };
 
-  const addPlaceLived = () => {
-    if (!livedCountry || !livedCity || !validateCityName(livedCity)) {
-      setPlacesLivedError("Select a country and enter a valid city before adding");
-      return;
+  const handleCityBlur = () => {
+    if (livedCountry && livedCity && validateCityName(livedCity)) {
+      const isDuplicate = placesLived.some(
+        (p) => p.city.toLowerCase() === livedCity.trim().toLowerCase() && p.country === livedCountry
+      );
+      if (!isDuplicate) {
+        setPlacesLived((prev) => [...prev, {
+          country: livedCountry,
+          city: livedCity.trim(),
+          locality: "",
+          timeLived: "",
+        }]);
+      }
     }
-    setPlacesLived((prev) => [...prev, { country: livedCountry, city: livedCity.trim() }]);
-    setLivedCountry("");
+  };
+
+  const updateLastPlace = (locality, timeLived) => {
+    setPlacesLived((prev) => {
+      if (prev.length === 0) return prev;
+      const updated = [...prev];
+      const last = updated[updated.length - 1];
+      if (
+        last.city.toLowerCase() === livedCity.trim().toLowerCase() &&
+        last.country === livedCountry
+      ) {
+        updated[updated.length - 1] = {
+          ...last,
+          locality: locality.trim(),
+          timeLived: timeLived.trim(),
+        };
+      }
+      return updated;
+    });
+  };
+
+  const commitCurrentPlace = () => {
+    if (!livedCountry || !livedCity || !validateCityName(livedCity)) return;
+    const isDuplicate = placesLived.some(
+      (p) => p.city.toLowerCase() === livedCity.trim().toLowerCase() && p.country === livedCountry
+    );
+    if (!isDuplicate) {
+      setPlacesLived((prev) => [...prev, {
+        country: livedCountry,
+        city: livedCity.trim(),
+        locality: livedLocality.trim(),
+        timeLived: livedTimeLived.trim(),
+      }]);
+    }
+    setLivedCountry("Pakistan");
     setLivedCity("");
+    setLivedLocality("");
+    setLivedTimeLived("");
     setPlacesLivedError("");
+    setLivedCityError("");
   };
 
   const removePlaceLived = (index) => {
     setPlacesLived((prev) => prev.filter((_, i) => i !== index));
   };
-
-  const toggleDialect = (value) => {
-    setDialects((prev) =>
-      prev.includes(value)
-        ? prev.filter((d) => d !== value)
-        : [...prev, value]
-    );
-  };
-
-  const primaryDialect = () => {
-    if (dialects.includes("hunza")) return "hunza";
-    if (dialects.includes("yasin")) return "yasin";
-    return dialects[0] || "";
-  };
-
-  const isResearcher = role === USER_ROLES.RESEARCHER;
 
   const hasBasicInfo =
     (!isResearcher || name.trim()) &&
@@ -188,15 +203,14 @@ export default function Signup() {
     (contactPref !== "mobile" || (mobile && validateMobile(mobile)));
 
   const hasCrowdsourcedInfo =
-    ageGroup &&
+    age &&
     gender &&
-    dialects.length > 0 &&
-    numOtherLangs !== "" &&
-    validateNumber(numOtherLangs) &&
-    !comfortLangError &&
-    birthCountry &&
-    birthCity &&
-    validateCityName(birthCity) &&
+    dialect &&
+    otherLangs.length > 0 &&
+    originCountry &&
+    originCity &&
+    validateCityName(originCity) &&
+    originLocality &&
     placesLived.length > 0;
 
   const canSubmit = hasBasicInfo && (isResearcher || hasCrowdsourcedInfo) && !submitting;
@@ -207,19 +221,18 @@ export default function Signup() {
     const draft = {
       name: name.trim(),
       username,
-      dialect: primaryDialect(),
+      dialect,
+      dialects: dialect ? [dialect] : [],
       gender,
       role,
-      ageGroup,
+      age,
       contactPref,
       email,
       mobile,
-      dialects,
-      otherDialect,
-      numOtherLangs,
       otherLangs,
+      otherLangsOther,
       comfortLang,
-      birthplace: { country: birthCountry, city: birthCity.trim() },
+      placeOfOrigin: { country: originCountry, city: originCity.trim(), locality: originLocality.trim() },
       placesLived,
     };
 
@@ -255,7 +268,6 @@ export default function Signup() {
   return (
     <div className="min-h-screen px-4 py-8">
       <div className="w-full max-w-xl mx-auto space-y-3">
-
         <div className="rounded-2xl bg-gradient-to-b from-neutral-900 to-neutral-950 p-6 shadow-2xl border border-neutral-800 space-y-6">
 
           {/* Header */}
@@ -291,7 +303,7 @@ export default function Signup() {
                 {
                   value: USER_ROLES.RESEARCHER,
                   title: "Researcher",
-                  desc: "Upload interviews and longer-form recordings.",
+                  desc: "Only select this if you have been explicitly assigned this role by the project admin.",
                 },
               ].map((opt) => (
                 <label
@@ -363,14 +375,8 @@ export default function Signup() {
                 value={contactPref}
                 onChange={(e) => {
                   setContactPref(e.target.value);
-                  if (e.target.value !== "mobile") {
-                    setMobile("");
-                    setMobileError("");
-                  }
-                  if (e.target.value !== "email") {
-                    setEmail("");
-                    setEmailError("");
-                  }
+                  if (e.target.value !== "mobile") { setMobile(""); setMobileError(""); }
+                  if (e.target.value !== "email") { setEmail(""); setEmailError(""); }
                 }}
               >
                 <option value="">Select an option</option>
@@ -379,7 +385,7 @@ export default function Signup() {
               </select>
             </div>
 
-            {/* Email address */}
+            {/* Email */}
             {contactPref === "email" && (
               <div className="space-y-1">
                 <label className="text-xs text-gray-400">Email Address *</label>
@@ -399,7 +405,7 @@ export default function Signup() {
               </div>
             )}
 
-            {/* Mobile number */}
+            {/* Mobile */}
             {contactPref === "mobile" && (
               <div className="space-y-1">
                 <label className="text-xs text-gray-400">Mobile Number *</label>
@@ -417,22 +423,18 @@ export default function Signup() {
 
             {!isResearcher && (
               <>
-            {/* Age group */}
+            {/* Age */}
             <div className="space-y-1">
-              <label className="text-xs text-gray-400">What is your age group? *</label>
-              <select
+              <label className="text-xs text-gray-400">What is your age? *</label>
+              <input
+                type="number"
+                min="1"
+                max="120"
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                value={ageGroup}
-                onChange={(e) => setAgeGroup(e.target.value)}
-              >
-                <option value="">Select age group</option>
-                <option value="under18">Under 18</option>
-                <option value="18-25">18 - 25</option>
-                <option value="26-35">26 - 35</option>
-                <option value="35-45">35 - 45</option>
-                <option value="46-60">46 - 60</option>
-                <option value="60+">60+</option>
-              </select>
+                placeholder="Enter your age"
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+              />
             </div>
 
             {/* Gender */}
@@ -450,14 +452,14 @@ export default function Signup() {
               </select>
             </div>
 
-            {/* Place of birth */}
+            {/* Place of origin */}
             <div className="space-y-1">
-              <label className="text-xs text-gray-400">Place of birth *</label>
+              <label className="text-xs text-gray-400">Place of origin *</label>
               <div className="grid grid-cols-2 gap-2">
                 <select
                   className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                  value={birthCountry}
-                  onChange={(e) => setBirthCountry(e.target.value)}
+                  value={originCountry}
+                  onChange={(e) => setOriginCountry(e.target.value)}
                 >
                   <option value="">Country</option>
                   {COUNTRIES.map((c) => (
@@ -466,14 +468,20 @@ export default function Signup() {
                 </select>
                 <input
                   className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
-                    birthCityError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
+                    originCityError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
                   }`}
                   placeholder="City"
-                  value={birthCity}
-                  onChange={handleBirthCityChange}
+                  value={originCity}
+                  onChange={handleOriginCityChange}
                 />
               </div>
-              {birthCityError && <p className="text-xs text-red-400">{birthCityError}</p>}
+              {originCityError && <p className="text-xs text-red-400">{originCityError}</p>}
+              <input
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Locality / Colony / Mohallah *"
+                value={originLocality}
+                onChange={(e) => setOriginLocality(e.target.value)}
+              />
             </div>
 
             {/* Places lived */}
@@ -497,17 +505,28 @@ export default function Signup() {
                   placeholder="City"
                   value={livedCity}
                   onChange={handleLivedCityChange}
+                  onBlur={handleCityBlur}
                 />
               </div>
               {livedCityError && <p className="text-xs text-red-400">{livedCityError}</p>}
-
-              <button
-                type="button"
-                onClick={addPlaceLived}
-                className="w-full rounded-lg bg-neutral-800 border border-neutral-700 py-1.5 text-sm text-white hover:bg-neutral-700"
-              >
-                + Add place
-              </button>
+              <input
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Locality / Colony / Mohallah (optional)"
+                value={livedLocality}
+                onChange={(e) => {
+                  setLivedLocality(e.target.value);
+                  updateLastPlace(e.target.value, livedTimeLived);
+                }}
+              />
+              <input
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Time lived here (optional, e.g. 2 years)"
+                value={livedTimeLived}
+                onChange={(e) => {
+                  setLivedTimeLived(e.target.value);
+                  updateLastPlace(livedLocality, e.target.value);
+                }}
+              />
 
               {placesLivedError && <p className="text-xs text-red-400">{placesLivedError}</p>}
 
@@ -518,7 +537,7 @@ export default function Signup() {
                       key={`${p.country}-${p.city}-${i}`}
                       className="flex items-center gap-1 bg-neutral-800 border border-neutral-700 rounded-full px-3 py-1 text-xs text-white"
                     >
-                      {p.city}, {p.country}
+                      {p.locality ? `${p.locality}, ` : ""}{p.city}, {p.country}{p.timeLived ? ` (${p.timeLived})` : ""}
                       <button
                         type="button"
                         onClick={() => removePlaceLived(i)}
@@ -530,6 +549,14 @@ export default function Signup() {
                   ))}
                 </div>
               )}
+
+              <button
+                type="button"
+                onClick={commitCurrentPlace}
+                className="w-full rounded-lg bg-neutral-800 border border-neutral-700 py-1.5 text-sm text-white hover:bg-neutral-700"
+              >
+                + Add another place
+              </button>
             </div>
 
             {/* Dialect */}
@@ -537,70 +564,53 @@ export default function Signup() {
               <label className="text-xs text-gray-400">
                 Which Burushaski dialect do you primarily speak? *
               </label>
-              <div className="flex flex-col gap-1 pt-1">
-                {[
-                  { value: "hunza", label: "Hunza" },
-                  { value: "nagar", label: "Nagar" },
-                  { value: "yasin", label: "Yasin" },
-                  { value: "mixed", label: "Mixed" },
-                ].map((opt) => (
-                  <label key={opt.value} className="flex items-center gap-2 text-sm text-white">
-                    <input
-                      type="checkbox"
-                      checked={dialects.includes(opt.value)}
-                      onChange={() => toggleDialect(opt.value)}
-                      className="accent-yellow-400"
-                    />
-                    {opt.label}
-                  </label>
-                ))}
-                <label className="flex items-center gap-2 text-sm text-white">
-                  <input
-                    type="checkbox"
-                    checked={dialects.includes("other")}
-                    onChange={() => toggleDialect("other")}
-                    className="accent-yellow-400"
-                  />
-                  Other:
-                </label>
-                {dialects.includes("other") && (
-                  <input
-                    className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                    placeholder="Please specify"
-                    value={otherDialect}
-                    onChange={(e) => setOtherDialect(e.target.value)}
-                  />
-                )}
-              </div>
-            </div>
-
-            {/* Number of other languages */}
-            <div className="space-y-1">
-              <label className="text-xs text-gray-400">
-                How many other languages do you speak besides Burushaski? *
-              </label>
-              <input
-                className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
-                  numOtherLangsError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
-                }`}
-                placeholder="e.g. 2"
-                value={numOtherLangs}
-                onChange={handleNumOtherLangsChange}
-              />
-              {numOtherLangsError && <p className="text-xs text-red-400">{numOtherLangsError}</p>}
+              <select
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                value={dialect}
+                onChange={(e) => setDialect(e.target.value)}
+              >
+                <option value="">Select dialect</option>
+                <option value="hunza">Hunza</option>
+                <option value="nagar">Nagar</option>
+                <option value="yasin">Yasin</option>
+              </select>
             </div>
 
             {/* Which other languages */}
             <div className="space-y-1">
               <label className="text-xs text-gray-400">
-                Which other languages do you speak? (optional)
+                Which other languages do you speak? *
               </label>
-              <input
-                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                placeholder="e.g. Urdu, English"
-                value={otherLangs}
-                onChange={(e) => setOtherLangs(e.target.value)}
-              />
+              <div className="flex flex-col gap-1 pt-1">
+                {["Shina", "Wakhi", "Khowar", "Urdu", "English", "Punjabi", "Pashto"].map((lang) => (
+                  <label key={lang} className="flex items-center gap-2 text-sm text-white">
+                    <input
+                      type="checkbox"
+                      checked={otherLangs.includes(lang)}
+                      onChange={() => toggleOtherLang(lang)}
+                      className="accent-yellow-400"
+                    />
+                    {lang}
+                  </label>
+                ))}
+                <label className="flex items-center gap-2 text-sm text-white">
+                  <input
+                    type="checkbox"
+                    checked={otherLangs.includes("other")}
+                    onChange={() => toggleOtherLang("other")}
+                    className="accent-yellow-400"
+                  />
+                  Others
+                </label>
+                {otherLangs.includes("other") && (
+                  <input
+                    className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                    placeholder="eg Mandarin, Spanish, Turkish"
+                    value={otherLangsOther}
+                    onChange={(e) => setOtherLangsOther(e.target.value)}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Most comfortable language */}
@@ -609,14 +619,11 @@ export default function Signup() {
                 Which language are you most comfortable speaking? (optional)
               </label>
               <input
-                className={`w-full rounded-lg bg-neutral-900 border px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 ${
-                  comfortLangError ? "border-red-500 focus:ring-red-400" : "border-neutral-700 focus:ring-yellow-400"
-                }`}
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
                 placeholder="e.g. Burushaski"
                 value={comfortLang}
-                onChange={handleComfortLangChange}
+                onChange={(e) => setComfortLang(e.target.value)}
               />
-              {comfortLangError && <p className="text-xs text-red-400">{comfortLangError}</p>}
             </div>
               </>
             )}

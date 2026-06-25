@@ -32,45 +32,62 @@ export default function Dashboard() {
   const [correctionFlag, setCorrectionFlag] = useState(false);
   const [suggestedCorrection, setSuggestedCorrection] = useState("");
   const audioUrlRef = useRef(null);
+  const [allValidationTasks, setAllValidationTasks] = useState([]);
+  const [validatedIds, setValidatedIds] = useState([]);
+  const [globalValidationCounts, setGlobalValidationCounts] = useState({});
+  const [validationVoting, setValidationVoting] = useState(false);
+  const [validationError, setValidationError] = useState("");
+
 
   useEffect(() => {
     if (!user) return;
 
-    const load = async () => {
-      setLoading(true);
-      setError("");
+const load = async () => {
+  setLoading(true);
+  setError("");
 
-      try {
-        const params = new URLSearchParams({
-          dialect: user.dialect || "",
-          participantId: user.participantId || "",
-        });
-        const response = await fetch(`${API_BASE_URL}/api/volunteer-dashboard?${params}`);
-        const data = await response.json().catch(() => ({}));
+  try {
+    const params = new URLSearchParams({
+      dialect: user.dialect || "",
+      participantId: user.participantId || "",
+    });
 
-        if (!response.ok) {
-          throw new Error(data.error || "Could not load recording prompts.");
-        }
+    const [dashRes, validationRes] = await Promise.all([
+      fetch(`${API_BASE_URL}/api/volunteer-dashboard?${params}`),
+      fetch(`${API_BASE_URL}/api/validation-tasks?${params}`),
+    ]);
 
-        setAllSentences(data.prompts || []);
-        setRecordedIds(data.recordedIds || []);
-        setGlobalCounts(data.globalCounts || {});
-      } catch (err) {
-        setError(err.message || "Could not load recording prompts.");
-      } finally {
-        setLoading(false);
-      }
-    };
+    const dashData = await dashRes.json().catch(() => ({}));
+    const validationData = await validationRes.json().catch(() => ({}));
+
+    if (!dashRes.ok) throw new Error(dashData.error || "Could not load recording prompts.");
+
+    setAllSentences(dashData.prompts || []);
+    setRecordedIds(dashData.recordedIds || []);
+    setGlobalCounts(dashData.globalCounts || {});
+    setAllValidationTasks((validationData.tasks || []).filter(t => t.participantId !== user.participantId));
+    setValidatedIds(validationData.validatedIds || []);
+    setGlobalValidationCounts(validationData.globalValidationCounts || {});
+  } catch (err) {
+    setError(err.message || "Could not load recording prompts.");
+  } finally {
+    setLoading(false);
+  }
+};
 
     load();
   }, [user]);
 
   const pickNextCard = useCallback((currentPickCount) => {
     if (!allSentences) return;
-    const next = pickNextPrompt(allSentences, recordedIds, globalCounts, user.dialect, currentPickCount);
+    const next = pickNextPrompt(
+      allSentences, recordedIds, globalCounts, user.dialect,
+      allValidationTasks, validatedIds, globalValidationCounts,
+      currentPickCount
+    );
     setCurrentCard(next);
     setPickCount(currentPickCount + 1);
-  }, [allSentences, recordedIds, globalCounts, user]);
+  }, [allSentences, recordedIds, globalCounts, user, allValidationTasks, validatedIds, globalValidationCounts]);
 
   useEffect(() => {
     if (allSentences) pickNextCard(0);
@@ -87,6 +104,40 @@ export default function Dashboard() {
     const timer = setTimeout(() => setShowSuccess(false), 2500);
     return () => clearTimeout(timer);
   }, [showSuccess]);
+
+  const handleValidationVote = async (vote) => {
+  if (!currentCard || validationVoting) return;
+  setValidationVoting(true);
+  setValidationError("");
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/validations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recordingId: currentCard.id,
+        participantId: user.participantId,
+        vote,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Could not submit vote.");
+
+    // Mark as validated locally
+    setValidatedIds((prev) => [...prev, currentCard.id]);
+    setGlobalValidationCounts((prev) => ({
+      ...prev,
+      [currentCard.id]: (prev[currentCard.id] || 0) + 1,
+    }));
+
+    pickNextCard(pickCount);
+  } catch (err) {
+    setValidationError(err.message);
+  } finally {
+    setValidationVoting(false);
+  }
+};
 
   const clearRecordingState = () => {
     if (audioUrlRef.current) {
@@ -241,21 +292,41 @@ const recordedForDialect = allSentences
       {error && <p className="text-red-400">Error: {error}</p>}
 
       {/* Flashcard */}
-      {!loading && !error && currentCard && (
+      {!loading && !error && currentCard && currentCard._cardType !== "validation" && (
         <div className="bg-white text-black rounded-3xl shadow-2xl p-10 md:p-14 space-y-8 max-w-2xl mx-auto min-h-[420px] flex flex-col justify-center">
           <div className="text-center space-y-4">
-            {currentCard.media_type === "image" && currentCard.media_url && (
-              <img
-                src={currentCard.media_url}
-                alt=""
-                className="mx-auto max-h-64 w-full rounded-2xl object-contain bg-gray-100"
-              />
-            )}
-            <p className="text-base text-gray-500 italic">{currentCard.english}</p>
-            {currentCard.transliteration && (
-              <p className="text-3xl md:text-4xl font-bold leading-snug">{currentCard.transliteration}</p>
-            )}
-          </div>
+  {currentCard.media_type === "image" && currentCard.media_url && (
+    <img
+      src={currentCard.media_url}
+      alt=""
+      className="mx-auto max-h-64 w-full rounded-2xl object-contain bg-gray-100"
+    />
+  )}
+
+  {currentCard.prompt_type === "picture_description" ? (
+    <p className="font-bold text-2xl leading-relaxed">
+      {currentCard.english}
+    </p>
+  ) : (
+    <>
+      <p className="text-sm text-gray-500">
+        Can you translate this into Burushaski?
+      </p>
+      <p className="font-bold text-3xl leading-relaxed">
+        "{currentCard.english}"
+      </p>
+    </>
+  )}
+
+  {currentCard.transliteration && currentCard.prompt_type !== "picture_description" && (
+    <details className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-center inline-block mx-auto">
+<summary className="cursor-pointer text-xs font-semibold text-gray-500">
+  Show suggested translation
+</summary>
+      <p className="text-sm text-gray-600 italic mt-2">{currentCard.transliteration}</p>
+    </details>
+  )}
+</div>
 
           {uploadError && (
             <p className="text-sm text-red-600 text-center">{uploadError}</p>
@@ -289,76 +360,107 @@ const recordedForDialect = allSentences
             </button>
           )}
 
-          {/* Step 3: recorded, reviewing — show playback + Submit */}
+{/* Step 3: recorded, reviewing — show playback + Submit */}
           {audioBlob && !isRecording && (
             <div className="space-y-4">
               <audio src={audioUrl} controls className="w-full" />
 
-              <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
-                <summary className="cursor-pointer text-sm font-semibold text-gray-700">
-                  Add optional transcript or correction
-                </summary>
-                <div className="mt-3 space-y-3">
-                  <label className="block space-y-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      What you said
-                    </span>
-                    <textarea
-                      className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
-                      rows={2}
-                      value={transcript}
-                      onChange={(event) => setTranscript(event.target.value)}
-                      placeholder="Optional Burushaski transcript"
-                    />
-                  </label>
-
-                  {currentCard.prompt_type === "picture_description" && (
+              {/* Text prompt optional transcript/correction */}
+              {currentCard.prompt_type !== "picture_description" && (
+                <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-700">
+                    Add optional transcript or correction
+                  </summary>
+                  <div className="mt-3 space-y-3">
                     <label className="block space-y-1">
                       <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        English meaning
+                        What you said
+                      </span>
+                      <textarea
+                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                        rows={2}
+                        value={transcript}
+                        onChange={(event) => setTranscript(event.target.value)}
+                        placeholder="Optional Burushaski transcript"
+                      />
+                    </label>
+
+                    <label className="flex items-start gap-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={correctionFlag}
+                        onChange={(event) => setCorrectionFlag(event.target.checked)}
+                      />
+                      <span>The suggested English is not how I would naturally or correctly say it.</span>
+                    </label>
+
+                    {correctionFlag && (
+                      <label className="block space-y-1">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Better English translation
+                        </span>
+                        <textarea
+                          className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                          rows={2}
+                          value={suggestedCorrection}
+                          onChange={(event) => setSuggestedCorrection(event.target.value)}
+                          placeholder="Write the better translation"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </details>
+              )}
+
+              {/* Image prompt optional transcript/translation */}
+              {currentCard.media_type === "image" && (
+                <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-700">
+                    Add optional transcript or translation
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        What you said (Burushaski transcript)
+                      </span>
+                      <textarea
+                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                        rows={2}
+                        value={transcript}
+                        onChange={(event) => setTranscript(event.target.value)}
+                        placeholder="Optional Burushaski transcript"
+                      />
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        English translation (optional)
                       </span>
                       <textarea
                         className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
                         rows={2}
                         value={englishTranslation}
                         onChange={(event) => setEnglishTranslation(event.target.value)}
-                        placeholder="Optional English translation"
+                        placeholder="Optional English translation of what you said"
                       />
                     </label>
-                  )}
-
-                  <label className="flex items-start gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={correctionFlag}
-                      onChange={(event) => setCorrectionFlag(event.target.checked)}
-                    />
-                    <span>The suggested English is not how I would naturally or correctly say it.</span>
-                  </label>
-
-                  {correctionFlag && (
-                    <label className="block space-y-1">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        Better English translation
-                      </span>
-                      <textarea
-                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
-                        rows={2}
-                        value={suggestedCorrection}
-                        onChange={(event) => setSuggestedCorrection(event.target.value)}
-                        placeholder="Write the better translation"
-                      />
-                    </label>
-                  )}
-                </div>
-              </details>
+                  </div>
+                </details>
+              )}
 
               <div className="flex gap-3">
                 <button
+                  onClick={clearRecordingState}
+                  disabled={uploading}
+                  className="px-6 py-4 rounded-xl font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+                >
+                  Re-record
+                </button>
+                <button
                   onClick={handleSubmit}
                   disabled={uploading || (correctionFlag && !suggestedCorrection.trim())}
-                  className="w-full bg-yellow-400 text-black py-4 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
+                  className="flex-1 bg-yellow-400 text-black py-4 rounded-xl font-semibold hover:bg-yellow-300 disabled:opacity-50"
                 >
                   {uploading ? "Submitting…" : "Submit"}
                 </button>
@@ -367,6 +469,53 @@ const recordedForDialect = allSentences
           )}
         </div>
       )}
+
+      {/* Validation card */}
+{!loading && !error && currentCard?._cardType === "validation" && (
+  <div className="bg-white text-black rounded-3xl shadow-2xl p-10 md:p-14 space-y-8 max-w-2xl mx-auto min-h-[420px] flex flex-col justify-center">
+    <div className="text-center space-y-2">
+      <p className="text-sm text-gray-500">
+        The volunteer was asked to say:
+      </p>
+      <p className="text-2xl font-bold leading-snug">"{currentCard.english}"</p>
+    </div>
+
+    <audio src={currentCard.audioUrl} controls className="w-full" />
+
+    <p className="text-center text-sm text-gray-600 font-medium">
+      Does this recording accurately say the sentence above?
+    </p>
+
+    {validationError && (
+      <p className="text-sm text-red-600 text-center">{validationError}</p>
+    )}
+
+    <div className="flex gap-3">
+      <button
+        onClick={() => handleValidationVote(-1)}
+        disabled={validationVoting}
+        className="flex-1 bg-red-100 text-red-700 py-4 rounded-xl font-semibold hover:bg-red-200 disabled:opacity-50 text-lg"
+      >
+        ✗ No
+      </button>
+      <button
+        onClick={() => handleValidationVote(1)}
+        disabled={validationVoting}
+        className="flex-1 bg-green-100 text-green-700 py-4 rounded-xl font-semibold hover:bg-green-200 disabled:opacity-50 text-lg"
+      >
+        ✓ Yes
+      </button>
+    </div>
+
+    <button
+      onClick={() => pickNextCard(pickCount)}
+      disabled={validationVoting}
+      className="text-sm text-gray-400 hover:text-gray-600 text-center"
+    >
+      Skip this validation →
+    </button>
+  </div>
+)}
 
       {/* Done state */}
       {!loading && !error && !currentCard && allSentences && (

@@ -39,28 +39,31 @@ function formatPlace(place) {
   if (!place) return "";
   if (typeof place === "string") return place;
 
+  const locality = place.locality?.trim();
   const city = place.city?.trim();
   const country = place.country?.trim();
 
-  return [city, country].filter(Boolean).join(", ");
+  return [locality, city, country].filter(Boolean).join(", ");
 }
 
 export function draftToSignupPayload(draft) {
   return {
     username: draft.username,
     name: draft.name || draft.username,
-    age: draft.ageGroup,
+    age: draft.age,
     gender: draft.gender,
     dialect: draft.dialect,
     dialects: draft.dialects || [],
     otherDialect: draft.otherDialect,
-    otherLanguages: parseCommaList(draft.otherLangs),
-    otherLanguageCount: draft.numOtherLangs,
+    otherLanguages: [
+      ...(draft.otherLangs || []).filter((l) => l !== "other"),
+      ...parseCommaList(draft.otherLangsOther),
+    ],
     comfortLanguage: draft.comfortLang,
     contactPreference: draft.contactPref,
     email: draft.email,
     mobileNumber: draft.mobile,
-    placeOfBirth: formatPlace(draft.birthplace),
+    placeOfOrigin: formatPlace(draft.placeOfOrigin),
     placesLived: (draft.placesLived || []).map(formatPlace).filter(Boolean),
     role: draft.role,
     consentAccepted: true,
