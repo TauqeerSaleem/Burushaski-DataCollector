@@ -8,6 +8,7 @@ import { uploadRecording } from "../utils/uploadRecording";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   (import.meta.env.DEV ? "http://localhost:3001" : "");
+const IMAGE_DESCRIPTION_MAX_RECORDING_MS = 5 * 60 * 1000;
 
 export default function Dashboard() {
   const { user, setUser } = useUser();
@@ -32,6 +33,8 @@ export default function Dashboard() {
   const [correctionFlag, setCorrectionFlag] = useState(false);
   const [suggestedCorrection, setSuggestedCorrection] = useState("");
   const audioUrlRef = useRef(null);
+  const recordingLimitTimerRef = useRef(null);
+  const recordingStartedAtRef = useRef(null);
   const [allValidationTasks, setAllValidationTasks] = useState([]);
   const [validatedIds, setValidatedIds] = useState([]);
   const [globalValidationCounts, setGlobalValidationCounts] = useState({});
@@ -96,6 +99,7 @@ const load = async () => {
   useEffect(() => {
     return () => {
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+      if (recordingLimitTimerRef.current) clearTimeout(recordingLimitTimerRef.current);
     };
   }, []);
 
@@ -139,7 +143,16 @@ const load = async () => {
   }
 };
 
+  const clearRecordingLimitTimer = () => {
+    if (recordingLimitTimerRef.current) {
+      clearTimeout(recordingLimitTimerRef.current);
+      recordingLimitTimerRef.current = null;
+    }
+  };
+
   const clearRecordingState = () => {
+    clearRecordingLimitTimer();
+    recordingStartedAtRef.current = null;
     if (audioUrlRef.current) {
       URL.revokeObjectURL(audioUrlRef.current);
       audioUrlRef.current = null;
@@ -163,6 +176,21 @@ const load = async () => {
     setUploadError("");
     try {
       await startRecording();
+      recordingStartedAtRef.current = Date.now();
+
+      if (currentCard?.prompt_type === "picture_description") {
+        clearRecordingLimitTimer();
+        recordingLimitTimerRef.current = setTimeout(async () => {
+          recordingLimitTimerRef.current = null;
+          setUploadError("Recording stopped at the 5-minute limit. Review it, then submit or re-record.");
+          try {
+            await handleStopRecording();
+          } catch (err) {
+            console.error("Could not stop recording at limit:", err);
+            setUploadError("Recording reached the 5-minute limit, but could not stop automatically. Please stop it manually.");
+          }
+        }, IMAGE_DESCRIPTION_MAX_RECORDING_MS);
+      }
     } catch (err) {
       console.error("Could not start recording:", err);
       setUploadError("Could not access microphone. Check permissions and try again.");
@@ -170,6 +198,7 @@ const load = async () => {
   };
 
   const handleStopRecording = async () => {
+    clearRecordingLimitTimer();
     const blob = await stopRecording();
     setAudioBlob(blob);
 
@@ -200,6 +229,8 @@ const load = async () => {
         englishTranslation: currentCard.prompt_type === "picture_description" ? englishTranslation : "",
         correctionFlag,
         suggestedCorrection,
+        promptType: currentCard.prompt_type,
+        durationMs: recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0,
       });
 
       setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
@@ -325,6 +356,9 @@ const recordedForDialect = allSentences
 </summary>
       <p className="text-sm text-gray-600 italic mt-2">{currentCard.transliteration}</p>
     </details>
+  )}
+  {currentCard.prompt_type === "picture_description" && (
+    <p className="text-sm text-gray-500">Image description recordings stop automatically at 5 minutes.</p>
   )}
 </div>
 

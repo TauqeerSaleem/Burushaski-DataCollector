@@ -139,6 +139,11 @@ function promptGroupLabel(value, fallback = "General Prompts") {
   return label === "Admin Prompts" ? "General Prompts" : label || fallback;
 }
 
+function isAdminAuthError(error) {
+  const message = error?.message || "";
+  return message === "Admin login required." || message === "Admin account is inactive.";
+}
+
 function promptTypeLabel(value) {
   return value === "picture_description" ? "Describe an image" : value ? "Speak an English sentence" : "-";
 }
@@ -299,7 +304,7 @@ function OverviewTab({ overview, prompts }) {
   );
 }
 
-function PromptsTab({ prompts, onRefresh }) {
+function PromptsTab({ prompts, onRefresh, onAuthError }) {
   const [form, setForm] = useState(emptyPrompt);
   const [editingId, setEditingId] = useState(null);
   const [filters, setFilters] = useState({ search: "", dialect: "all", type: "all", status: "active" });
@@ -502,6 +507,8 @@ function PromptsTab({ prompts, onRefresh }) {
               current.map((item) => item.name === file.name ? { ...item, status: "Done" } : item)
             );
           } catch (err) {
+            if (isAdminAuthError(err)) throw err;
+
             const message = err.message || "Failed";
             results.push({ name: file.name, status: message });
             setImageQueue((current) =>
@@ -525,6 +532,10 @@ function PromptsTab({ prompts, onRefresh }) {
       await onRefresh();
     } catch (err) {
       setUploadingMedia(false);
+      if (isAdminAuthError(err)) {
+        onAuthError?.();
+        return;
+      }
       setError(err.message || "Unable to save prompt.");
     }
   };
@@ -1884,6 +1895,11 @@ export default function AdminPanel() {
 
   const token = getAdminToken();
 
+  const handleAuthError = useCallback(() => {
+    clearAdminSession();
+    navigate("/admin/login", { replace: true });
+  }, [navigate]);
+
   const load = useCallback(async () => {
     setError("");
     setLoading(true);
@@ -1911,14 +1927,11 @@ export default function AdminPanel() {
       setAdmins(adminsData);
     } catch (err) {
       setError(err.message || "Unable to load admin panel.");
-      if (err.message === "Admin login required." || err.message === "Admin account is inactive.") {
-        clearAdminSession();
-        navigate("/admin/login", { replace: true });
-      }
+      if (isAdminAuthError(err)) handleAuthError();
     } finally {
       setLoading(false);
     }
-  }, [navigate, recordsPage.pageSize]);
+  }, [handleAuthError, recordsPage.pageSize]);
 
   useEffect(() => {
     if (token) load();
@@ -1973,7 +1986,7 @@ export default function AdminPanel() {
   }, [loadCorrections]);
 
   const currentView = useMemo(() => {
-    if (activeTab === "prompts") return <PromptsTab prompts={prompts} onRefresh={load} />;
+    if (activeTab === "prompts") return <PromptsTab prompts={prompts} onRefresh={load} onAuthError={handleAuthError} />;
     if (activeTab === "research") return <ResearchTasksTab tasks={researchTasks} users={users} onRefresh={load} />;
     if (activeTab === "cc") return <ContentCreatorTab users={users} recordsPage={recordsPage} />;
     if (activeTab === "users") return <UsersTab users={users} onRefresh={load} />;
@@ -1995,7 +2008,7 @@ export default function AdminPanel() {
     }
     if (activeTab === "admins") return <AdminsTab admins={admins} currentAdmin={admin} onRefresh={load} />;
     return <OverviewTab overview={overview} prompts={prompts} />;
-  }, [activeTab, admin, overview, users, data, recordsPage, correctionsData, prompts, researchTasks, admins, recordsLoading, correctionsLoading, load, loadRecordsPage, loadCorrections, approveCorrection]);
+  }, [activeTab, admin, overview, users, data, recordsPage, correctionsData, prompts, researchTasks, admins, recordsLoading, correctionsLoading, load, loadRecordsPage, loadCorrections, approveCorrection, handleAuthError]);
 
   if (!token) return <Navigate to="/admin/login" replace />;
 

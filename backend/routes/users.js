@@ -11,6 +11,9 @@ const APP_USER_WRITE_COLUMNS = new Set([
   "participant_id",
   "username",
   "display_name",
+  "contact_preference",
+  "email",
+  "mobile_number",
   "role",
   "dialect",
   "gender",
@@ -99,6 +102,16 @@ function cleanPlaceArray(value) {
 // Safe JSON parse with fallback — handles old flattened string values gracefully.
 function safeParse(val, fallback) {
   if (val === null || val === undefined) return fallback;
+  if (Array.isArray(val)) {
+    return val.map((item) => {
+      if (typeof item !== "string") return item;
+      try {
+        return JSON.parse(item);
+      } catch {
+        return item;
+      }
+    });
+  }
   if (typeof val === "object") return val; // already parsed (jsonb column)
   try {
     return JSON.parse(val);
@@ -181,6 +194,9 @@ function userPayload(body, { includeParticipantId = false } = {}) {
     username,
     role: normalizeUserRole(body.role),
     display_name: cleanText(body.name || body.displayName),
+    contact_preference: cleanText(body.contactPreference || body.contact_preference),
+    email: cleanText(body.email),
+    mobile_number: cleanText(body.mobileNumber || body.mobile_number),
     dialect: cleanText(body.dialect),
     gender: cleanText(body.gender),
     age: cleanText(body.age),
@@ -189,7 +205,7 @@ function userPayload(body, { includeParticipantId = false } = {}) {
     // Stored as JSON strings so they survive text/text[] columns without
     // a schema migration. toClientUser() and safeParse() deserialize on read.
     place_of_origin: placeOfOrigin !== null ? JSON.stringify(placeOfOrigin) : null,
-    places_lived: JSON.stringify(placesLived),
+    places_lived: placesLived.map((place) => JSON.stringify(place)),
     consent_accepted: Boolean(body.consentAccepted || body.consent_accepted),
     updated_at: new Date().toISOString(),
   };

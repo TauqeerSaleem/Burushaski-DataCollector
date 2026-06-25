@@ -80,6 +80,20 @@ router.post("/contributions", async (req, res) => {
       });
     }
 
+    const { data: user, error: userError } = await supabase
+      .from("app_users")
+      .select("role, active")
+      .eq("username", payload.username)
+      .maybeSingle();
+
+    if (userError) throw userError;
+
+    if (!user || user.active === false || normalizeUserRole(user.role) !== payload.role) {
+      return res.status(403).json({
+        error: "Contribution role does not match an active user account.",
+      });
+    }
+
     const { data, error } = await supabase
       .from("contributions")
       .insert(payload)
