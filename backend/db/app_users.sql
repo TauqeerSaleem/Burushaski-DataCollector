@@ -19,6 +19,7 @@ create table if not exists public.app_users (
   other_language_count text,
   other_languages text[] not null default '{}',
   comfort_language text,
+  place_of_origin text,
   place_of_birth text,
   places_lived text[] not null default '{}',
   consent_accepted boolean not null default false,
@@ -39,6 +40,7 @@ alter table public.app_users add column if not exists age text;
 alter table public.app_users add column if not exists other_language_count text;
 alter table public.app_users add column if not exists other_languages text[] not null default '{}';
 alter table public.app_users add column if not exists comfort_language text;
+alter table public.app_users add column if not exists place_of_origin text;
 alter table public.app_users add column if not exists place_of_birth text;
 alter table public.app_users add column if not exists places_lived text[] not null default '{}';
 alter table public.app_users add column if not exists consent_accepted boolean not null default false;

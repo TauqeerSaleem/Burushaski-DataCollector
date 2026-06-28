@@ -25,7 +25,14 @@ const EXPORT_LIMIT = 50000;
 const MAX_PROMPT_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_RECORDING_BYTES = 30 * 1024 * 1024;
 const PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
-const ALLOWED_PROMPT_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const ALLOWED_PROMPT_MEDIA_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/bmp",
+  "image/x-ms-bmp",
+]);
 const ALLOWED_RECORDING_TYPES = new Set([
   "audio/webm",
   "audio/mp4",
@@ -412,10 +419,18 @@ function recordingToClient(row) {
     promptType: row.prompt_type || "",
     promptDialect: row.prompt_dialect || "",
     moduleTitle: row.prompt_module_title || "",
+    username: row.username || "",
+    userRole: row.user_role || "",
     transcript: row.transcript || "",
     englishTranslation: row.english_translation || "",
     correctionFlag: Boolean(row.correction_flag),
     suggestedCorrection: row.suggested_correction || "",
+    validationScore: row.validation_score || 0,
+    validationWeight: row.validation_weight || 1,
+    validationCount: row.validation_count || 0,
+    validationYes: row.validation_yes || 0,
+    validationNo: row.validation_no || 0,
+    validations: row.validations || [],
   };
 }
 
@@ -443,8 +458,8 @@ function promptPayload(body, admin) {
 
   return {
     ...(body.promptId !== undefined ? { prompt_id: cleanText(body.promptId) } : {}),
-    ...(body.moduleId !== undefined ? { module_id: cleanText(body.moduleId) || "admin-prompts" } : {}),
-    ...(body.moduleTitle !== undefined ? { module_title: cleanText(body.moduleTitle) || "Admin Prompts" } : {}),
+    ...(body.moduleId !== undefined ? { module_id: cleanText(body.moduleId) || "general-prompts" } : {}),
+    ...(body.moduleTitle !== undefined ? { module_title: cleanText(body.moduleTitle) || "General Prompts" } : {}),
     ...(body.promptType !== undefined ? { prompt_type: cleanText(body.promptType) || "translation" } : {}),
     ...(body.dialect !== undefined ? { dialect: cleanText(body.dialect) } : {}),
     ...(body.english !== undefined ? { english } : {}),
@@ -510,11 +525,11 @@ function promptsToModules(rows) {
   const modules = new Map();
 
   rows.forEach((row) => {
-    const moduleId = row.module_id || "admin-prompts";
+    const moduleId = row.module_id || "general-prompts";
     if (!modules.has(moduleId)) {
       modules.set(moduleId, {
         moduleId,
-        title: row.module_title || "Admin Prompts",
+        title: row.module_title || "General Prompts",
         sentences: [],
       });
     }
@@ -938,9 +953,11 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
     const [
       usersResult,
       recordingsResult,
+      validationsResult,
     ] = await Promise.all([
       supabase.from("app_users").select("role, dialect, gender, created_at"),
       supabase.from("recordings").select("participant_id, module_id, sentence_id, created_at"),
+      supabase.from("validations").select("id", { count: "exact", head: true }),
     ]);
 
     const errors = [usersResult, recordingsResult]
@@ -963,6 +980,7 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
       totals: {
         users: users.length,
         recordings: recordings.length,
+        validations: validationsResult.error ? 0 : validationsResult.count || 0,
       },
       usersByRole: countBy(users, "role"),
       usersByDialect: countBy(users, "dialect"),
@@ -1338,6 +1356,9 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
     const pageSize = cleanInteger(req.query.pageSize, DATA_PAGE_SIZE, 1, MAX_DATA_PAGE_SIZE);
     const participantId = cleanText(req.query.participantId);
     const moduleId = cleanText(req.query.moduleId);
+    const dialect = cleanDialect(req.query.dialect);
+    const roleFilter = cleanText(req.query.role);
+    const participantRole = Object.values(USER_ROLES).includes(roleFilter) ? roleFilter : null;
     const search = cleanSearch(req.query.search);
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
@@ -1354,22 +1375,66 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
       promptSearchIds = Array.from(new Set((matchingPrompts || []).map((prompt) => prompt.prompt_id)));
     }
 
+    let roleParticipantIds = null;
+    if (participantRole) {
+      const { data: matchingUsers, error: roleSearchError } = await supabase
+        .from("app_users")
+        .select("participant_id")
+        .eq("role", participantRole)
+        .limit(EXPORT_LIMIT);
+
+      if (roleSearchError) throw roleSearchError;
+      roleParticipantIds = (matchingUsers || []).map((user) => user.participant_id).filter(Boolean);
+
+      if (roleParticipantIds.length === 0 || (participantId && !roleParticipantIds.includes(participantId))) {
+        return res.json({
+          rows: [],
+          page,
+          pageSize,
+          total: 0,
+          totalPages: 1,
+        });
+      }
+    }
+
+    let participantSearchIds = [];
+    if (search) {
+      const { data: matchingUsers, error: userSearchError } = await supabase
+        .from("app_users")
+        .select("participant_id")
+        .or([
+          `participant_id.ilike.%${search}%`,
+          `username.ilike.%${search}%`,
+          `display_name.ilike.%${search}%`,
+          `email.ilike.%${search}%`,
+          `mobile_number.ilike.%${search}%`,
+        ].join(","))
+        .limit(1000);
+
+      if (userSearchError) throw userSearchError;
+      participantSearchIds = Array.from(new Set((matchingUsers || []).map((user) => user.participant_id).filter(Boolean)));
+    }
+
     let query = supabase
       .from("recordings")
       .select("*", { count: "exact" })
       .order("created_at", { ascending: false });
 
     if (participantId) query = query.eq("participant_id", participantId);
+    if (!participantId && roleParticipantIds) query = query.in("participant_id", roleParticipantIds);
     if (moduleId) query = query.eq("module_id", moduleId);
+    if (dialect) query = query.eq("dialect", dialect);
     if (search) {
       const searchClauses = [
         `participant_id.ilike.%${search}%`,
+        `dialect.ilike.%${search}%`,
         `module_id.ilike.%${search}%`,
         `sentence_id.ilike.%${search}%`,
         `audio_path.ilike.%${search}%`,
         `transcript.ilike.%${search}%`,
         `english_translation.ilike.%${search}%`,
         `suggested_correction.ilike.%${search}%`,
+        ...participantSearchIds.map((id) => `participant_id.eq.${id}`),
         ...promptSearchIds.map((promptId) => `sentence_id.eq.${promptId}`),
       ];
       query = query.or(searchClauses.join(","));
@@ -1396,8 +1461,66 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
       promptMap = new Map((promptRows || []).map((prompt) => [`${prompt.module_id}:${prompt.prompt_id}`, prompt]));
     }
 
+    const participantIds = Array.from(new Set((data || []).map((recording) => recording.participant_id).filter(Boolean)));
+    let participantMap = new Map();
+    if (participantIds.length) {
+      const { data: userRows, error: userError } = await supabase
+        .from("app_users")
+        .select("participant_id, username, role, dialect, gender, age")
+        .in("participant_id", participantIds);
+
+      if (userError) throw userError;
+      participantMap = new Map((userRows || []).map((user) => [user.participant_id, user]));
+    }
+
+    const recordingIds = (data || []).map((recording) => recording.id).filter(Boolean);
+    const validationMap = new Map();
+    if (recordingIds.length) {
+      const { data: validations, error: validationError } = await supabase
+        .from("validations")
+        .select("recording_id, validator_id, vote, created_at")
+        .in("recording_id", recordingIds);
+
+      if (!validationError) {
+        const validatorIds = Array.from(new Set((validations || []).map((validation) => validation.validator_id).filter(Boolean)));
+        let validatorMap = new Map();
+        if (validatorIds.length) {
+          const { data: validatorRows, error: validatorError } = await supabase
+            .from("app_users")
+            .select("participant_id, username, role")
+            .in("participant_id", validatorIds);
+
+          if (!validatorError) {
+            validatorMap = new Map((validatorRows || []).map((user) => [user.participant_id, user]));
+          } else {
+            console.warn("Admin validation voter names unavailable:", validatorError.message);
+          }
+        }
+
+        (validations || []).forEach((validation) => {
+          const current = validationMap.get(validation.recording_id) || { count: 0, yes: 0, no: 0, items: [] };
+          const validator = validatorMap.get(validation.validator_id) || {};
+          current.count += 1;
+          if (Number(validation.vote) > 0) current.yes += 1;
+          if (Number(validation.vote) < 0) current.no += 1;
+          current.items.push({
+            validatorId: validation.validator_id || "",
+            validatorUsername: validator.username || validation.validator_id || "Unknown validator",
+            validatorRole: validator.role || "",
+            vote: Number(validation.vote) > 0 ? "yes" : Number(validation.vote) < 0 ? "no" : "neutral",
+            createdAt: validation.created_at || "",
+          });
+          validationMap.set(validation.recording_id, current);
+        });
+      } else {
+        console.warn("Admin validation summary unavailable:", validationError.message);
+      }
+    }
+
     const rows = await Promise.all((data || []).map(async (recording) => {
         const prompt = promptMap.get(`${recording.module_id}:${recording.sentence_id}`) || {};
+        const participant = participantMap.get(recording.participant_id) || {};
+        const validation = validationMap.get(recording.id) || {};
         const { data: signedAudio } = await supabase.storage
           .from("audio-recordings")
           .createSignedUrl(recording.audio_path, 60 * 60);
@@ -1409,6 +1532,12 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
           prompt_type: prompt.prompt_type,
           prompt_dialect: prompt.dialect,
           prompt_module_title: prompt.module_title,
+          username: participant.username,
+          user_role: participant.role,
+          validation_count: validation.count || 0,
+          validation_yes: validation.yes || 0,
+          validation_no: validation.no || 0,
+          validations: validation.items || [],
         });
       }));
 
@@ -1553,7 +1682,7 @@ router.post(
 
       const contentType = cleanMimeType(req.get("content-type"));
       if (!ALLOWED_PROMPT_MEDIA_TYPES.has(contentType)) {
-        return res.status(415).json({ error: "Prompt media must be a JPG, PNG, WebP, or GIF image." });
+        return res.status(415).json({ error: "Prompt media must be a JPG, PNG, WebP, GIF, or BMP image." });
       }
 
       if (!req.body || req.body.length === 0) {
@@ -1565,9 +1694,11 @@ router.post(
         "image/png": "png",
         "image/webp": "webp",
         "image/gif": "gif",
+        "image/bmp": "bmp",
+        "image/x-ms-bmp": "bmp",
       }[contentType];
       const fileName = cleanFileName(req.get("x-file-name"));
-      const path = `admin-prompts/${Date.now()}-${cryptoRandomId()}-${fileName}.${extension}`;
+      const path = `prompt-images/${Date.now()}-${cryptoRandomId()}-${fileName}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
         .from("prompt-media")
@@ -1646,8 +1777,8 @@ router.post("/admin/prompts", requireAdmin, async (req, res) => {
     }
 
     payload.prompt_id = payload.prompt_id || generatePromptId(payload);
-    payload.module_id = payload.module_id || slugify(payload.module_title, "admin-prompts");
-    payload.module_title = payload.module_title || "Admin Prompts";
+    payload.module_id = payload.module_id || slugify(payload.module_title, "general-prompts");
+    payload.module_title = payload.module_title || "General Prompts";
     payload.media_type = payload.prompt_type === "picture_description" ? "image" : payload.media_type || "none";
     payload.difficulty = payload.difficulty || "short";
     payload.weight = payload.weight || 1;

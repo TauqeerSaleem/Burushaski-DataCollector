@@ -43,14 +43,11 @@ const dialectOptions = [
   { value: "hunza", label: "Hunza" },
   { value: "nagar", label: "Nagar" },
   { value: "yasin", label: "Yasin" },
-  { value: "mixed", label: "Mixed / general" },
 ];
 
 const promptTypeOptions = [
-  { value: "translation", label: "Read or translate a sentence" },
-  { value: "elicitation", label: "Answer an open prompt" },
+  { value: "translation", label: "Speak an English sentence" },
   { value: "picture_description", label: "Describe an image" },
-  { value: "gamified", label: "Game-style prompt" },
 ];
 
 const defaultPromptGroups = [
@@ -62,7 +59,7 @@ const defaultPromptGroups = [
   "Adverbs",
   "Possession",
   "Postpositions",
-  "Admin Prompts",
+  "General Prompts",
   "Image Prompts",
 ];
 
@@ -74,9 +71,10 @@ const participantRoleOptions = [
 
 const emptyPrompt = {
   promptId: "",
-  moduleId: "admin-prompts",
-  moduleTitle: "Admin Prompts",
-  promptType: "elicitation",
+  moduleId: "general-prompts",
+  moduleTitle: "General Prompts",
+  promptType: "translation",
+  legacyPromptType: "",
   dialect: "",
   english: "",
   transliteration: "",
@@ -126,7 +124,7 @@ function uniq(values) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
-function slugify(value, fallback = "admin-prompts") {
+function slugify(value, fallback = "general-prompts") {
   const slug = String(value || "")
     .trim()
     .toLowerCase()
@@ -136,8 +134,23 @@ function slugify(value, fallback = "admin-prompts") {
   return slug || fallback;
 }
 
+function promptGroupLabel(value, fallback = "General Prompts") {
+  const label = String(value || "").trim();
+  return label === "Admin Prompts" ? "General Prompts" : label || fallback;
+}
+
 function promptTypeLabel(value) {
-  return promptTypeOptions.find((option) => option.value === value)?.label || value || "-";
+  return value === "picture_description" ? "Describe an image" : value ? "Speak an English sentence" : "-";
+}
+
+function promptTypeFilterValue(value) {
+  return value === "picture_description" ? "picture_description" : "translation";
+}
+
+function dialectLabel(value) {
+  const option = dialectOptions.find((item) => item.value === value);
+  if (option) return option.label;
+  return value ? String(value).charAt(0).toUpperCase() + String(value).slice(1) : "-";
 }
 
 function matchesText(row, query, fields) {
@@ -255,7 +268,7 @@ function OverviewTab({ overview, prompts }) {
     count: usersByRole[role] || 0,
   }));
   const dialectRows = Object.entries(overview?.usersByDialect || {}).map(([dialect, count]) => ({
-    dialect,
+    dialect: dialectLabel(dialect === "unknown" ? "" : dialect),
     count,
   }));
   const recordingModuleRows = Object.entries(overview?.recordingsByModule || {})
@@ -264,11 +277,12 @@ function OverviewTab({ overview, prompts }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <Stat label="Volunteers" value={usersByRole[USER_ROLES.VOLUNTEER] || 0} />
         <Stat label="Researchers" value={usersByRole[USER_ROLES.RESEARCHER] || 0} />
         <Stat label="Content creators" value={usersByRole[USER_ROLES.CONTENT_CONTRIBUTOR] || 0} />
         <Stat label="Recordings" value={totals.recordings || 0} />
+        <Stat label="Validations" value={totals.validations || 0} />
         <Stat label="Active prompts" value={(prompts || []).filter((prompt) => prompt.active).length} />
       </div>
 
@@ -289,14 +303,22 @@ function PromptsTab({ prompts, onRefresh }) {
   const [form, setForm] = useState(emptyPrompt);
   const [editingId, setEditingId] = useState(null);
   const [filters, setFilters] = useState({ search: "", dialect: "all", type: "all", status: "active" });
-  const [groupMode, setGroupMode] = useState("Admin Prompts");
+  const [groupMode, setGroupMode] = useState("General Prompts");
   const [newGroupTitle, setNewGroupTitle] = useState("");
   const [sort, setSort] = useState({ key: "moduleTitle", direction: "asc" });
   const [error, setError] = useState("");
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imageQueue, setImageQueue] = useState([]);
+  const imageInputRef = useRef(null);
 
   const promptGroups = useMemo(
-    () => uniq([...defaultPromptGroups, ...prompts.map((prompt) => prompt.moduleTitle || prompt.moduleId)]),
+    () => uniq([
+      ...defaultPromptGroups,
+      ...prompts
+        .map((prompt) => prompt.moduleTitle || prompt.moduleId)
+        .filter((group) => group !== "Admin Prompts"),
+    ]),
     [prompts]
   );
   const filterDialects = useMemo(() => uniq(prompts.map((prompt) => prompt.dialect || "all dialects")), [prompts]);
@@ -305,10 +327,11 @@ function PromptsTab({ prompts, onRefresh }) {
       prompts.filter((prompt) => {
         const dialect = prompt.dialect || "all dialects";
         const status = prompt.active ? "active" : "inactive";
+        const promptForSearch = { ...prompt, moduleTitle: promptGroupLabel(prompt.moduleTitle || prompt.moduleId) };
         return (
-          matchesText(prompt, filters.search, ["promptId", "moduleTitle", "english", "transliteration", "grammaticalCategory"]) &&
+          matchesText(promptForSearch, filters.search, ["promptId", "moduleTitle", "english", "transliteration", "grammaticalCategory"]) &&
           (filters.dialect === "all" || dialect === filters.dialect) &&
-          (filters.type === "all" || prompt.promptType === filters.type) &&
+          (filters.type === "all" || promptTypeFilterValue(prompt.promptType) === filters.type) &&
           (filters.status === "all" || status === filters.status)
         );
       }),
@@ -317,9 +340,10 @@ function PromptsTab({ prompts, onRefresh }) {
   const sortedPrompts = useMemo(() => {
     const valueFor = (prompt, key) => {
       if (key === "promptType") return promptTypeLabel(prompt.promptType);
-      if (key === "dialect") return prompt.dialect || "all";
+      if (key === "dialect") return dialectLabel(prompt.dialect);
       if (key === "active") return prompt.active ? "active" : "inactive";
       if (key === "recordingCount") return Number(prompt.recordingCount || 0);
+      if (key === "moduleTitle") return promptGroupLabel(prompt.moduleTitle || prompt.moduleId);
       return prompt[key] || "";
     };
 
@@ -402,8 +426,13 @@ function PromptsTab({ prompts, onRefresh }) {
   const resetPromptForm = () => {
     setForm(emptyPrompt);
     setEditingId(null);
-    setGroupMode("Admin Prompts");
+    setGroupMode("General Prompts");
     setNewGroupTitle("");
+    setImageFiles([]);
+    setImageQueue([]);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
   };
 
   const save = async (event) => {
@@ -411,10 +440,16 @@ function PromptsTab({ prompts, onRefresh }) {
     setError("");
 
     try {
-      const groupTitle = (groupMode === "__new__" ? newGroupTitle : form.moduleTitle).trim() || "Admin Prompts";
+      const groupTitle = promptGroupLabel(groupMode === "__new__" ? newGroupTitle : form.moduleTitle);
       const payload = {
         ...form,
         promptId: form.promptId || undefined,
+        promptType: form.promptType === "picture_description"
+          ? "picture_description"
+          : form.legacyPromptType && form.legacyPromptType !== "picture_description"
+            ? form.legacyPromptType
+            : "translation",
+        legacyPromptType: undefined,
         moduleTitle: groupTitle,
         moduleId: slugify(groupTitle),
         grammaticalCategory: groupTitle,
@@ -427,7 +462,61 @@ function PromptsTab({ prompts, onRefresh }) {
       };
 
       if (editingId) {
-        await updatePrompt(editingId, payload);
+        if (imageFiles.length > 1) {
+          setError("Choose one image when editing an existing prompt. Multiple images create new prompts.");
+          return;
+        }
+
+        const media = imageFiles.length ? await uploadPromptMedia(imageFiles[0]) : null;
+        await updatePrompt(editingId, {
+          ...payload,
+          mediaUrl: media ? media.path || media.signedUrl || "" : payload.mediaUrl,
+        });
+      } else if (form.promptType === "picture_description" && imageFiles.length) {
+        setUploadingMedia(true);
+        setImageQueue(imageFiles.map((file) => ({ name: file.name, status: "Queued" })));
+
+        let succeeded = 0;
+        const results = [];
+
+        for (const file of imageFiles) {
+          setImageQueue((current) =>
+            current.map((item) => item.name === file.name ? { ...item, status: "Uploading image" } : item)
+          );
+
+          try {
+            const media = await uploadPromptMedia(file);
+            setImageQueue((current) =>
+              current.map((item) => item.name === file.name ? { ...item, status: "Creating prompt" } : item)
+            );
+
+            await createPrompt({
+              ...payload,
+              promptId: undefined,
+              mediaUrl: media.path || media.signedUrl || "",
+            });
+
+            succeeded += 1;
+            results.push({ name: file.name, status: "Done" });
+            setImageQueue((current) =>
+              current.map((item) => item.name === file.name ? { ...item, status: "Done" } : item)
+            );
+          } catch (err) {
+            const message = err.message || "Failed";
+            results.push({ name: file.name, status: message });
+            setImageQueue((current) =>
+              current.map((item) => item.name === file.name ? { ...item, status: message } : item)
+            );
+          }
+        }
+
+        setUploadingMedia(false);
+        setImageQueue(results);
+        if (succeeded !== imageFiles.length) {
+          setError(`${succeeded} of ${imageFiles.length} image prompts were created. Review the queue for failed files.`);
+          if (succeeded > 0) await onRefresh();
+          return;
+        }
       } else {
         await createPrompt(payload);
       }
@@ -435,15 +524,27 @@ function PromptsTab({ prompts, onRefresh }) {
       resetPromptForm();
       await onRefresh();
     } catch (err) {
+      setUploadingMedia(false);
       setError(err.message || "Unable to save prompt.");
     }
   };
 
   const edit = (prompt) => {
     setEditingId(prompt.id);
-    setForm({ ...emptyPrompt, ...prompt, mediaUrl: prompt.mediaPath || prompt.mediaUrl || "" });
-    setGroupMode(prompt.moduleTitle || "Admin Prompts");
+    setForm({
+      ...emptyPrompt,
+      ...prompt,
+      legacyPromptType: prompt.promptType,
+      promptType: prompt.promptType === "picture_description" ? "picture_description" : "translation",
+      mediaUrl: prompt.mediaPath || prompt.mediaUrl || "",
+    });
+    setGroupMode(promptGroupLabel(prompt.moduleTitle));
     setNewGroupTitle("");
+    setImageFiles([]);
+    setImageQueue([]);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
     setError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -459,20 +560,16 @@ function PromptsTab({ prompts, onRefresh }) {
     }
   };
 
-  const uploadMedia = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const updateImageFiles = (event) => {
+    setImageFiles(Array.from(event.target.files || []));
+    setImageQueue([]);
+  };
 
-    setError("");
-    setUploadingMedia(true);
-    try {
-      const media = await uploadPromptMedia(file);
-      setForm({ ...form, mediaType: "image", mediaUrl: media.path || media.signedUrl || "" });
-    } catch (err) {
-      setError(err.message || "Unable to upload image.");
-    } finally {
-      setUploadingMedia(false);
-      event.target.value = "";
+  const clearImageFiles = () => {
+    setImageFiles([]);
+    setImageQueue([]);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
     }
   };
 
@@ -538,7 +635,7 @@ function PromptsTab({ prompts, onRefresh }) {
           )}
           <label className="space-y-1 text-xs text-neutral-400">
             <span>Task type</span>
-            <select className="select-field" value={form.promptType} onChange={(event) => updatePromptType(event.target.value)}>
+            <select className="select-field" value={promptTypeFilterValue(form.promptType)} onChange={(event) => updatePromptType(event.target.value)}>
               {promptTypeOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
@@ -598,28 +695,70 @@ function PromptsTab({ prompts, onRefresh }) {
                 className="input-field"
                 name="media-url"
                 autoComplete="off"
-                placeholder="Paste a public image URL, or upload a local image below"
+                placeholder="Paste one public image URL, or upload local image files below"
                 value={form.mediaUrl}
                 onChange={(event) => setForm({ ...form, mediaUrl: event.target.value })}
               />
             </label>
             <div className="flex flex-wrap items-center gap-3">
-            <label className="rounded bg-neutral-800 px-3 py-2 text-sm text-white hover:bg-neutral-700">
-              {uploadingMedia ? "Uploading..." : "Upload local image"}
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                className="hidden"
-                disabled={uploadingMedia}
-                onChange={uploadMedia}
-              />
-            </label>
-            {isHttpUrl(form.mediaUrl) && (
-              <a className="text-sm text-yellow-300 underline" href={form.mediaUrl} target="_blank" rel="noreferrer">
-                Open current media
-              </a>
-            )}
+              <label className="rounded bg-neutral-800 px-3 py-2 text-sm text-white hover:bg-neutral-700">
+                {uploadingMedia ? "Uploading..." : imageFiles.length ? `${imageFiles.length} image${imageFiles.length === 1 ? "" : "s"} selected` : "Upload image files"}
+                <input
+                  type="file"
+                  multiple={!editingId}
+                  ref={imageInputRef}
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.bmp"
+                  className="hidden"
+                  disabled={uploadingMedia}
+                  onChange={updateImageFiles}
+                />
+              </label>
+              {(imageFiles.length > 0 || imageQueue.length > 0) && (
+                <button
+                  type="button"
+                  className="rounded bg-neutral-800 px-3 py-2 text-sm text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={uploadingMedia}
+                  onClick={clearImageFiles}
+                >
+                  Clear images
+                </button>
+              )}
+              {isHttpUrl(form.mediaUrl) && (
+                <a className="text-sm text-yellow-300 underline" href={form.mediaUrl} target="_blank" rel="noreferrer">
+                  Open current media
+                </a>
+              )}
             </div>
+            {imageFiles.length > 1 && (
+              <p className="text-xs text-neutral-500">
+                These {imageFiles.length} images will be saved as separate prompts with the same group, dialect, visibility, and volunteer text.
+              </p>
+            )}
+            {editingId && imageFiles.length > 1 && (
+              <p className="text-xs text-yellow-200">Editing accepts one replacement image at a time.</p>
+            )}
+            {imageQueue.length > 0 && (
+              <div className="max-h-56 overflow-auto rounded-md border border-neutral-800 bg-neutral-950/70">
+                <table className="min-w-full divide-y divide-neutral-800 text-sm">
+                  <thead className="bg-neutral-950 text-left text-xs uppercase text-neutral-500">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">File</th>
+                      <th className="px-3 py-2 font-semibold">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-800">
+                    {imageQueue.map((item, index) => (
+                      <tr key={`${item.name}-${index}`}>
+                        <td className="px-3 py-2 text-neutral-300">{item.name}</td>
+                        <td className={`px-3 py-2 ${item.status === "Done" ? "text-emerald-300" : item.status === "Queued" || item.status.includes("ing") ? "text-yellow-300" : "text-red-300"}`}>
+                          {item.status}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -627,12 +766,13 @@ function PromptsTab({ prompts, onRefresh }) {
           <button
             className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={
+              uploadingMedia ||
               !form.english ||
               (groupMode === "__new__" && !newGroupTitle.trim()) ||
-              (form.promptType === "picture_description" && !form.mediaUrl)
+              (form.promptType === "picture_description" && !form.mediaUrl && !imageFiles.length)
             }
           >
-            {editingId ? "Save Changes" : "Add Prompt"}
+            {uploadingMedia ? "Uploading..." : editingId ? "Save Changes" : imageFiles.length > 1 ? `Add ${imageFiles.length} Prompts` : "Add Prompt"}
           </button>
           {editingId && (
             <button type="button" className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700" onClick={resetPromptForm}>
@@ -652,7 +792,7 @@ function PromptsTab({ prompts, onRefresh }) {
           <select className="select-field" value={filters.dialect} onChange={(event) => setFilters({ ...filters, dialect: event.target.value })}>
             <option value="all">All dialects</option>
             {filterDialects.map((dialect) => (
-              <option key={dialect} value={dialect}>{dialect}</option>
+              <option key={dialect} value={dialect}>{dialectLabel(dialect === "all dialects" ? "" : dialect)}</option>
             ))}
           </select>
         </label>
@@ -680,10 +820,10 @@ function PromptsTab({ prompts, onRefresh }) {
       <Table
         columns={[
           { key: "promptId", label: "Prompt", sortable: true, render: (prompt) => <span className="font-mono text-xs">{prompt.promptId}</span> },
-          { key: "moduleTitle", label: "Group", sortable: true },
+          { key: "moduleTitle", label: "Group", sortable: true, render: (prompt) => promptGroupLabel(prompt.moduleTitle || prompt.moduleId) },
           { key: "english", label: "Volunteer sees", sortable: true, render: (prompt) => <span className="block max-w-md text-neutral-300">{prompt.english}</span> },
           { key: "promptType", label: "Type", sortable: true, render: (prompt) => <Badge tone={prompt.promptType === "picture_description" ? "blue" : "neutral"}>{promptTypeLabel(prompt.promptType)}</Badge> },
-          { key: "dialect", label: "Dialect", sortable: true, render: (prompt) => prompt.dialect || "all" },
+          { key: "dialect", label: "Dialect", sortable: true, render: (prompt) => dialectLabel(prompt.dialect) },
           { key: "recordingCount", label: "Recordings", sortable: true },
           { key: "active", label: "Status", sortable: true, render: (prompt) => <Badge tone={prompt.active ? "green" : "neutral"}>{prompt.active ? "Active" : "Inactive"}</Badge> },
           {
@@ -999,7 +1139,7 @@ function UsersTab({ users, onRefresh }) {
           <select className="select-field" value={filters.dialect} onChange={(event) => setFilters({ ...filters, dialect: event.target.value })}>
             <option value="all">All dialects</option>
             {dialects.map((dialect) => (
-              <option key={dialect} value={dialect}>{dialect}</option>
+              <option key={dialect} value={dialect}>{dialectLabel(dialect)}</option>
             ))}
           </select>
         </label>
@@ -1059,6 +1199,18 @@ function UsersTab({ users, onRefresh }) {
                         <option value="true">Active</option>
                         <option value="false">Inactive</option>
                       </select>
+                    ) : key === "dialect" ? (
+                      <select
+                        className="select-field"
+                        value={draft.dialect || ""}
+                        onChange={(event) => setDraft({ ...draft, dialect: event.target.value })}
+                      >
+                        {dialectOptions.map((option) => (
+                          <option key={option.value || "blank"} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                     ) : (
                       <input
                         className="input-field"
@@ -1079,7 +1231,7 @@ function UsersTab({ users, onRefresh }) {
               </div>
             ) : (
               <div className="mt-4 grid gap-2 text-sm text-neutral-300 md:grid-cols-4">
-                <p>Dialect: {user.dialect || "-"}</p>
+                <p>Dialect: {dialectLabel(user.dialect)}</p>
                 <p>Gender: {user.gender || "-"}</p>
                 <p>Age: {user.age || "-"}</p>
                 <p>Contact: {user.email || user.mobileNumber || user.contactPreference || "-"}</p>
@@ -1167,7 +1319,7 @@ function ContentCreatorTab({ users, recordsPage }) {
         columns={[
           { key: "username", label: "Username", sortable: true },
           { key: "participantId", label: "Participant ID", sortable: true },
-          { key: "dialect", label: "Dialect", sortable: true },
+          { key: "dialect", label: "Dialect", sortable: true, render: (user) => dialectLabel(user.dialect) },
           { key: "recordingCount", label: "Records", sortable: true },
           { key: "contact", label: "Contact", render: (user) => user.email || user.mobileNumber || "-" },
           { key: "active", label: "Status", sortable: true, render: (user) => <Badge tone={user.active ? "green" : "neutral"}>{user.active ? "Active" : "Inactive"}</Badge> },
@@ -1181,7 +1333,7 @@ function ContentCreatorTab({ users, recordsPage }) {
       <Table
         columns={[
           { key: "participantId", label: "Participant" },
-          { key: "moduleTitle", label: "Group", render: (recording) => recording.moduleTitle || recording.moduleId },
+          { key: "moduleTitle", label: "Group", render: (recording) => promptGroupLabel(recording.moduleTitle || recording.moduleId) },
           { key: "promptEnglish", label: "Prompt text", render: (recording) => <span className="block max-w-md">{recording.promptEnglish || "-"}</span> },
           { key: "audioPath", label: "Audio path", render: (recording) => <span className="font-mono text-xs">{recording.audioPath}</span> },
           { key: "createdAt", label: "Created" },
@@ -1205,7 +1357,7 @@ function DataTab({
   onApproveCorrection,
 }) {
   const [activeView, setActiveView] = useState("records");
-  const [filters, setFilters] = useState({ search: "", moduleId: "all", participantId: "all" });
+  const [filters, setFilters] = useState({ search: "", moduleId: "all", participantId: "all", dialect: "all", role: "all" });
   const [correctionFilters, setCorrectionFilters] = useState({ search: "", participantId: "all", moduleId: "all", promptId: "all" });
   const [recordSort, setRecordSort] = useState({ key: "createdAt", direction: "desc" });
   const [correctionSort, setCorrectionSort] = useState({ key: "count", direction: "desc" });
@@ -1239,6 +1391,8 @@ function DataTab({
       search: filters.search,
       moduleId: filters.moduleId,
       participantId: filters.participantId,
+      dialect: filters.dialect,
+      role: filters.role,
     });
   };
 
@@ -1252,7 +1406,7 @@ function DataTab({
   };
 
   const clearRecordFilters = () => {
-    const cleared = { search: "", moduleId: "all", participantId: "all" };
+    const cleared = { search: "", moduleId: "all", participantId: "all", dialect: "all", role: "all" };
     setFilters(cleared);
     onRecordsPage(1, cleared);
   };
@@ -1300,10 +1454,10 @@ function DataTab({
 
       {activeView === "records" ? (
         <div className="space-y-4">
-          <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-4">
+          <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-6">
             <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
               <span>Search records</span>
-              <input className="input-field" placeholder="Participant, group, prompt, audio path..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
+              <input className="input-field" placeholder="Participant, username, group, prompt, transcript..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
             </label>
             <label className="space-y-1 text-xs text-neutral-400">
               <span>Prompt group</span>
@@ -1311,6 +1465,24 @@ function DataTab({
                 <option value="all">All groups</option>
                 {modules.map((moduleId) => (
                   <option key={moduleId} value={moduleId}>{moduleId}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs text-neutral-400">
+              <span>Dialect</span>
+              <select className="select-field" value={filters.dialect} onChange={(event) => setFilters({ ...filters, dialect: event.target.value })}>
+                <option value="all">All dialects</option>
+                {dialectOptions.filter((option) => option.value).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs text-neutral-400">
+              <span>Role</span>
+              <select className="select-field" value={filters.role} onChange={(event) => setFilters({ ...filters, role: event.target.value })}>
+                <option value="all">All roles</option>
+                {participantRoleOptions.map((role) => (
+                  <option key={role} value={role}>{getRoleLabel(role)}</option>
                 ))}
               </select>
             </label>
@@ -1323,7 +1495,7 @@ function DataTab({
                 ))}
               </select>
             </label>
-            <div className="flex items-end gap-2 md:col-span-4">
+            <div className="flex items-end gap-2 md:col-span-6">
               <button
                 type="button"
                 className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1345,13 +1517,43 @@ function DataTab({
 
           <Table
             columns={[
-              { key: "participantId", label: "Participant", sortable: true },
-              { key: "moduleTitle", label: "Group", sortable: true, render: (recording) => recording.moduleTitle || recording.moduleId },
+              { key: "participantId", label: "Participant", sortable: true, render: (recording) => (
+                <div>
+                  <p className="font-medium">{recording.username || recording.participantId}</p>
+                  <p className="text-xs text-neutral-500">{recording.participantId}</p>
+                </div>
+              ) },
+              { key: "dialect", label: "Dialect", sortable: true, render: (recording) => dialectLabel(recording.dialect) },
+              { key: "moduleTitle", label: "Group", sortable: true, render: (recording) => promptGroupLabel(recording.moduleTitle || recording.moduleId) },
               { key: "sentenceId", label: "Prompt", sortable: true },
+              { key: "promptType", label: "Type", sortable: true, render: (recording) => promptTypeLabel(recording.promptType) },
               { key: "promptEnglish", label: "Prompt text", sortable: true, render: (recording) => <span className="block max-w-md">{recording.promptEnglish || "-"}</span> },
               { key: "transcript", label: "Transcript", sortable: true, render: (recording) => <span className="block max-w-md">{recording.transcript || "-"}</span> },
               { key: "englishTranslation", label: "Translation", sortable: true, render: (recording) => <span className="block max-w-md">{recording.englishTranslation || "-"}</span> },
               { key: "suggestedCorrection", label: "Correction", sortable: true, render: (recording) => recording.correctionFlag ? <span className="block max-w-md text-yellow-200">{recording.suggestedCorrection || "Flagged"}</span> : "-" },
+              {
+                key: "validationCount",
+                label: "Validation received",
+                sortable: true,
+                render: (recording) => (
+                  <div className={recording.validationCount ? "space-y-1 text-emerald-300" : "text-neutral-500"}>
+                    <p>
+                      {recording.validationCount || 0} received · Yes {recording.validationYes || 0} · No {recording.validationNo || 0}
+                    </p>
+                    {recording.validationCount > 0 && <p className="text-xs text-neutral-400">Score {recording.validationScore || 0}</p>}
+                    {(recording.validations || []).length > 0 && (
+                      <div className="space-y-0.5 text-xs text-neutral-400">
+                        {(recording.validations || []).slice(0, 3).map((validation, index) => (
+                          <p key={`${validation.validatorId || validation.validatorUsername}-${index}`}>
+                            {validation.validatorUsername || validation.validatorId}: {validation.vote === "yes" ? "accepted" : validation.vote === "no" ? "rejected" : "neutral"}
+                          </p>
+                        ))}
+                        {recording.validations.length > 3 && <p>+{recording.validations.length - 3} more</p>}
+                      </div>
+                    )}
+                  </div>
+                ),
+              },
               {
                 key: "audioPath",
                 label: "Audio",
@@ -1451,7 +1653,7 @@ function DataTab({
 
           <Table
             columns={[
-              { key: "moduleTitle", label: "Group", sortable: true },
+              { key: "moduleTitle", label: "Group", sortable: true, render: (group) => promptGroupLabel(group.moduleTitle || group.moduleId) },
               { key: "promptId", label: "Prompt", sortable: true },
               { key: "currentPrompt", label: "Current volunteer text", sortable: true, render: (group) => <span className="block max-w-md">{group.currentPrompt || "-"}</span> },
               { key: "count", label: "Corrections", sortable: true },
@@ -1511,7 +1713,7 @@ function DataTab({
           <Table
             columns={[
               { key: "participantId", label: "Participant" },
-              { key: "moduleTitle", label: "Group" },
+              { key: "moduleTitle", label: "Group", render: (correction) => promptGroupLabel(correction.moduleTitle || correction.moduleId) },
               { key: "promptId", label: "Prompt" },
               { key: "correction", label: "Suggested correction", render: (correction) => <span className="block max-w-md">{correction.correction}</span> },
               { key: "createdAt", label: "Created" },
