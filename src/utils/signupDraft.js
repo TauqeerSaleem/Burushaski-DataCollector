@@ -74,6 +74,8 @@ export function draftToSignupPayload(draft) {
     otherDialect: draft.otherDialect || null,
     otherLanguages,
     comfortLanguage: draft.comfortLang || null,
+    educationLevel: draft.educationLevel || null,
+    occupation: draft.occupation || null,
     contactPreference: draft.contactPref || null,
     email: draft.email || null,
     mobileNumber: draft.mobile || null,

@@ -22,6 +22,8 @@ const APP_USER_WRITE_COLUMNS = new Set([
   "comfort_language",
   "place_of_origin",
   "places_lived",
+  "education_level",
+  "occupation",
   "consent_accepted",
   "updated_at",
 ]);
@@ -176,6 +178,8 @@ function toClientUser(row) {
     // text columns storing JSON strings, and old flattened strings.
     placeOfOrigin: safeParse(row.place_of_origin, null),
     placesLived: safeParse(row.places_lived, []),
+    educationLevel: row.education_level || "",
+    occupation: row.occupation || "",
     consentAccepted: Boolean(row.consent_accepted),
     active: row.active !== false,
   };
@@ -206,6 +210,8 @@ function userPayload(body, { includeParticipantId = false } = {}) {
     // a schema migration. toClientUser() and safeParse() deserialize on read.
     place_of_origin: placeOfOrigin !== null ? JSON.stringify(placeOfOrigin) : null,
     places_lived: placesLived.map((place) => JSON.stringify(place)),
+    education_level: cleanText(body.educationLevel || body.education_level),
+    occupation: cleanText(body.occupation),
     consent_accepted: Boolean(body.consentAccepted || body.consent_accepted),
     updated_at: new Date().toISOString(),
   };

@@ -202,6 +202,12 @@ add column if not exists email text;
 alter table public.app_users
 add column if not exists place_of_origin text;
 
+alter table public.app_users
+add column if not exists education_level text;
+
+alter table public.app_users
+add column if not exists occupation text;
+
 alter table public.prompt_bank
 add column if not exists media_type text not null default 'none';
 
