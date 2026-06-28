@@ -8,6 +8,7 @@ import { uploadRecording } from "../utils/uploadRecording";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   (import.meta.env.DEV ? "http://localhost:3001" : "");
+const IMAGE_DESCRIPTION_MAX_RECORDING_MS = 5 * 60 * 1000;
 
 export default function Dashboard() {
   const { user, setUser } = useUser();
@@ -32,6 +33,8 @@ export default function Dashboard() {
   const [correctionFlag, setCorrectionFlag] = useState(false);
   const [suggestedCorrection, setSuggestedCorrection] = useState("");
   const audioUrlRef = useRef(null);
+  const recordingLimitTimerRef = useRef(null);
+  const recordingStartedAtRef = useRef(null);
   const [allValidationTasks, setAllValidationTasks] = useState([]);
   const [validatedIds, setValidatedIds] = useState([]);
   const [globalValidationCounts, setGlobalValidationCounts] = useState({});
@@ -65,7 +68,7 @@ const load = async () => {
     setAllSentences(dashData.prompts || []);
     setRecordedIds(dashData.recordedIds || []);
     setGlobalCounts(dashData.globalCounts || {});
-    setAllValidationTasks(validationData.tasks || []);
+    setAllValidationTasks((validationData.tasks || []).filter(t => t.participantId !== user.participantId));
     setValidatedIds(validationData.validatedIds || []);
     setGlobalValidationCounts(validationData.globalValidationCounts || {});
   } catch (err) {
@@ -96,6 +99,7 @@ const load = async () => {
   useEffect(() => {
     return () => {
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+      if (recordingLimitTimerRef.current) clearTimeout(recordingLimitTimerRef.current);
     };
   }, []);
 
@@ -139,7 +143,16 @@ const load = async () => {
   }
 };
 
+  const clearRecordingLimitTimer = () => {
+    if (recordingLimitTimerRef.current) {
+      clearTimeout(recordingLimitTimerRef.current);
+      recordingLimitTimerRef.current = null;
+    }
+  };
+
   const clearRecordingState = () => {
+    clearRecordingLimitTimer();
+    recordingStartedAtRef.current = null;
     if (audioUrlRef.current) {
       URL.revokeObjectURL(audioUrlRef.current);
       audioUrlRef.current = null;
@@ -163,6 +176,21 @@ const load = async () => {
     setUploadError("");
     try {
       await startRecording();
+      recordingStartedAtRef.current = Date.now();
+
+      if (currentCard?.prompt_type === "picture_description") {
+        clearRecordingLimitTimer();
+        recordingLimitTimerRef.current = setTimeout(async () => {
+          recordingLimitTimerRef.current = null;
+          setUploadError("Recording stopped at the 5-minute limit. Review it, then submit or re-record.");
+          try {
+            await handleStopRecording();
+          } catch (err) {
+            console.error("Could not stop recording at limit:", err);
+            setUploadError("Recording reached the 5-minute limit, but could not stop automatically. Please stop it manually.");
+          }
+        }, IMAGE_DESCRIPTION_MAX_RECORDING_MS);
+      }
     } catch (err) {
       console.error("Could not start recording:", err);
       setUploadError("Could not access microphone. Check permissions and try again.");
@@ -170,6 +198,7 @@ const load = async () => {
   };
 
   const handleStopRecording = async () => {
+    clearRecordingLimitTimer();
     const blob = await stopRecording();
     setAudioBlob(blob);
 
@@ -200,6 +229,8 @@ const load = async () => {
         englishTranslation: currentCard.prompt_type === "picture_description" ? englishTranslation : "",
         correctionFlag,
         suggestedCorrection,
+        promptType: currentCard.prompt_type,
+        durationMs: recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0,
       });
 
       setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
@@ -326,6 +357,9 @@ const recordedForDialect = allSentences
       <p className="text-sm text-gray-600 italic mt-2">{currentCard.transliteration}</p>
     </details>
   )}
+  {currentCard.prompt_type === "picture_description" && (
+    <p className="text-sm text-gray-500">Image description recordings stop automatically at 5 minutes.</p>
+  )}
 </div>
 
           {uploadError && (
@@ -360,70 +394,94 @@ const recordedForDialect = allSentences
             </button>
           )}
 
-          {/* Step 3: recorded, reviewing — show playback + Submit */}
+{/* Step 3: recorded, reviewing — show playback + Submit */}
           {audioBlob && !isRecording && (
             <div className="space-y-4">
               <audio src={audioUrl} controls className="w-full" />
 
-              <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
-                <summary className="cursor-pointer text-sm font-semibold text-gray-700">
-                  Add optional transcript or correction
-                </summary>
-                <div className="mt-3 space-y-3">
-                  <label className="block space-y-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      What you said
-                    </span>
-                    <textarea
-                      className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
-                      rows={2}
-                      value={transcript}
-                      onChange={(event) => setTranscript(event.target.value)}
-                      placeholder="Optional Burushaski transcript"
-                    />
-                  </label>
-
-                  {currentCard.prompt_type === "picture_description" && (
+              {/* Text prompt optional transcript/correction */}
+              {currentCard.prompt_type !== "picture_description" && (
+                <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-700">
+                    Add optional transcript or correction
+                  </summary>
+                  <div className="mt-3 space-y-3">
                     <label className="block space-y-1">
                       <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        English meaning
+                        What you said
+                      </span>
+                      <textarea
+                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                        rows={2}
+                        value={transcript}
+                        onChange={(event) => setTranscript(event.target.value)}
+                        placeholder="Optional Burushaski transcript"
+                      />
+                    </label>
+
+                    <label className="flex items-start gap-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={correctionFlag}
+                        onChange={(event) => setCorrectionFlag(event.target.checked)}
+                      />
+                      <span>The suggested English is not how I would naturally or correctly say it.</span>
+                    </label>
+
+                    {correctionFlag && (
+                      <label className="block space-y-1">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Better English translation
+                        </span>
+                        <textarea
+                          className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                          rows={2}
+                          value={suggestedCorrection}
+                          onChange={(event) => setSuggestedCorrection(event.target.value)}
+                          placeholder="Write the better translation"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </details>
+              )}
+
+              {/* Image prompt optional transcript/translation */}
+              {currentCard.media_type === "image" && (
+                <details className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-left">
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-700">
+                    Add optional transcript or translation
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        What you said (Burushaski transcript)
+                      </span>
+                      <textarea
+                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
+                        rows={2}
+                        value={transcript}
+                        onChange={(event) => setTranscript(event.target.value)}
+                        placeholder="Optional Burushaski transcript"
+                      />
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        English translation (optional)
                       </span>
                       <textarea
                         className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
                         rows={2}
                         value={englishTranslation}
                         onChange={(event) => setEnglishTranslation(event.target.value)}
-                        placeholder="Optional English translation"
+                        placeholder="Optional English translation of what you said"
                       />
                     </label>
-                  )}
-
-                  <label className="flex items-start gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={correctionFlag}
-                      onChange={(event) => setCorrectionFlag(event.target.checked)}
-                    />
-                    <span>The suggested English is not how I would naturally or correctly say it.</span>
-                  </label>
-
-                  {correctionFlag && (
-                    <label className="block space-y-1">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        Better English translation
-                      </span>
-                      <textarea
-                        className="w-full rounded-xl border border-gray-300 p-3 text-sm outline-none focus:border-yellow-500"
-                        rows={2}
-                        value={suggestedCorrection}
-                        onChange={(event) => setSuggestedCorrection(event.target.value)}
-                        placeholder="Write the better translation"
-                      />
-                    </label>
-                  )}
-                </div>
-              </details>
+                  </div>
+                </details>
+              )}
 
               <div className="flex gap-3">
                 <button
@@ -431,7 +489,7 @@ const recordedForDialect = allSentences
                   disabled={uploading}
                   className="px-6 py-4 rounded-xl font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-50"
                 >
-                  ← Back
+                  Re-record
                 </button>
                 <button
                   onClick={handleSubmit}
@@ -445,7 +503,6 @@ const recordedForDialect = allSentences
           )}
         </div>
       )}
-
 
       {/* Validation card */}
 {!loading && !error && currentCard?._cardType === "validation" && (

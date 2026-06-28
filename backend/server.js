@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import webpush from "web-push";
 import { startCronJobs } from "./jobs/cronJobs.js";
 import adminRoutes from "./routes/admin.js";
+import contributionRoutes from "./routes/contributions.js";
 import reminderRoutes from "./routes/reminders.js";
 import userRoutes from "./routes/users.js";
 import { supabase } from "./supabaseClient.js";
@@ -80,6 +81,7 @@ app.get("/api/health", healthCheck);
 // ============================================
 app.use("/api", reminderRoutes);
 app.use("/api", userRoutes);
+app.use("/api", contributionRoutes);
 app.use("/api", adminRoutes);
 
 // ============================================

@@ -13,12 +13,16 @@ export async function uploadRecording({
   englishTranslation,
   correctionFlag,
   suggestedCorrection,
+  promptType,
+  durationMs,
 }) {
   const optionalHeaders = {};
   if (transcript?.trim()) optionalHeaders["X-Transcript"] = encodeURIComponent(transcript.trim());
   if (englishTranslation?.trim()) optionalHeaders["X-English-Translation"] = encodeURIComponent(englishTranslation.trim());
   if (correctionFlag) optionalHeaders["X-Correction-Flag"] = "true";
   if (suggestedCorrection?.trim()) optionalHeaders["X-Suggested-Correction"] = encodeURIComponent(suggestedCorrection.trim());
+  if (promptType) optionalHeaders["X-Prompt-Type"] = promptType;
+  if (Number.isFinite(durationMs) && durationMs > 0) optionalHeaders["X-Recording-Duration-Ms"] = String(Math.round(durationMs));
 
   const response = await fetch(`${API_BASE_URL}/api/recordings`, {
     method: "POST",

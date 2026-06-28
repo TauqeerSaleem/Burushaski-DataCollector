@@ -9,7 +9,9 @@ export default function VolunteerRoute({ children }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (normalizeUserRole(user.role) !== USER_ROLES.VOLUNTEER) {
+  const role = normalizeUserRole(user.role);
+
+  if (role !== USER_ROLES.VOLUNTEER && role !== USER_ROLES.CONTENT_CONTRIBUTOR) {
     return <Navigate to="/dashboard" replace />;
   }
 

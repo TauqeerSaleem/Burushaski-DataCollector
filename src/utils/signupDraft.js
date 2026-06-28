@@ -35,36 +35,55 @@ export function parseCommaList(value) {
     .filter(Boolean);
 }
 
-function formatPlace(place) {
-  if (!place) return "";
-  if (typeof place === "string") return place;
+// Preserves the full structured shape of a place object.
+// Returns null for empty/missing input.
+function normalizePlace(place) {
+  if (!place) return null;
 
-  const locality = place.locality?.trim();
-  const city = place.city?.trim();
-  const country = place.country?.trim();
+  if (typeof place === "string") {
+    const trimmed = place.trim();
+    return trimmed ? { country: "", city: trimmed, locality: "", timeLived: "" } : null;
+  }
 
-  return [locality, city, country].filter(Boolean).join(", ");
+  const country = (place.country || "").trim();
+  const city = (place.city || "").trim();
+  const locality = (place.locality || "").trim();
+  const timeLived = (place.timeLived || "").trim();
+
+  if (!country && !city && !locality && !timeLived) return null;
+
+  return { country, city, locality, timeLived };
 }
 
 export function draftToSignupPayload(draft) {
+  // Build otherLanguages: take selected langs minus "other",
+  // then append any free-text entries from the "other" field.
+  const otherLanguages = [
+    ...(draft.otherLangs || []).filter((l) => l !== "other"),
+    ...parseCommaList(draft.otherLangsOther),
+  ];
+
   return {
     username: draft.username,
     name: draft.name || draft.username,
     age: draft.age,
     gender: draft.gender,
-    dialect: draft.dialect,
+    // dialect is a single value: "Hunza" | "Nagar" | "Yasin"
+    dialect: draft.dialect || null,
     dialects: draft.dialects || [],
-    otherDialect: draft.otherDialect,
-    otherLanguages: [
-      ...(draft.otherLangs || []).filter((l) => l !== "other"),
-      ...parseCommaList(draft.otherLangsOther),
-    ],
-    comfortLanguage: draft.comfortLang,
-    contactPreference: draft.contactPref,
-    email: draft.email,
-    mobileNumber: draft.mobile,
-    placeOfOrigin: formatPlace(draft.placeOfOrigin),
-    placesLived: (draft.placesLived || []).map(formatPlace).filter(Boolean),
+    otherDialect: draft.otherDialect || null,
+    otherLanguages,
+    comfortLanguage: draft.comfortLang || null,
+    contactPreference: draft.contactPref || null,
+    email: draft.email || null,
+    mobileNumber: draft.mobile || null,
+    // Structured objects: { country, city, locality, timeLived }
+    // Backend (users.js) will JSON.stringify these before storing,
+    // so the full breakdown survives the text/text[] column constraint.
+    placeOfOrigin: normalizePlace(draft.placeOfOrigin),
+    placesLived: (draft.placesLived || [])
+      .map(normalizePlace)
+      .filter(Boolean),
     role: draft.role,
     consentAccepted: true,
   };

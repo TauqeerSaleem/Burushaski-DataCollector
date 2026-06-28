@@ -24,6 +24,7 @@ const MAX_DATA_PAGE_SIZE = 200;
 const EXPORT_LIMIT = 50000;
 const MAX_PROMPT_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_RECORDING_BYTES = 30 * 1024 * 1024;
+const MAX_IMAGE_DESCRIPTION_RECORDING_MS = 5 * 60 * 1000;
 const PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
 const ALLOWED_PROMPT_MEDIA_TYPES = new Set([
   "image/jpeg",
@@ -686,9 +687,26 @@ router.post(
       const englishTranslation = cleanHeaderText(req.get("x-english-translation"));
       const suggestedCorrection = cleanHeaderText(req.get("x-suggested-correction"));
       const correctionFlag = cleanBooleanHeader(req.get("x-correction-flag"));
+      let promptType = cleanText(req.get("x-prompt-type"));
+      const recordingDurationMs = cleanInteger(req.get("x-recording-duration-ms"), 0, 0);
 
       if (!participantId || !moduleId || !sentenceId) {
         return res.status(400).json({ error: "Participant, module, and prompt IDs are required." });
+      }
+
+      const { data: promptRow, error: promptTypeError } = await supabase
+        .from("prompt_bank")
+        .select("prompt_type")
+        .eq("module_id", moduleId)
+        .eq("prompt_id", sentenceId)
+        .maybeSingle();
+
+      if (!promptTypeError && promptRow?.prompt_type) {
+        promptType = promptRow.prompt_type;
+      }
+
+      if (promptType === "picture_description" && recordingDurationMs > MAX_IMAGE_DESCRIPTION_RECORDING_MS + 1000) {
+        return res.status(413).json({ error: "Image description recordings must be 5 minutes or shorter." });
       }
 
       if (!(await requireActiveParticipant(participantId, res))) return;

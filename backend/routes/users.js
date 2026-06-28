@@ -1,12 +1,30 @@
 import crypto from "node:crypto";
 import express from "express";
 import { hasServiceRoleKey, hasSupabaseConfig, supabase } from "../supabaseClient.js";
-import { normalizeUserRole } from "../utils/roles.js";
+import { USER_ROLES, normalizeUserRole } from "../utils/roles.js";
 
 const router = express.Router();
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9._-]{3,32}$/;
 const LEGACY_PARTICIPANT_ID_PATTERN = /^P-\d+$/i;
+const APP_USER_WRITE_COLUMNS = new Set([
+  "participant_id",
+  "username",
+  "display_name",
+  "contact_preference",
+  "email",
+  "mobile_number",
+  "role",
+  "dialect",
+  "gender",
+  "age",
+  "other_languages",
+  "comfort_language",
+  "place_of_origin",
+  "places_lived",
+  "consent_accepted",
+  "updated_at",
+]);
 
 function requireServiceRole(res) {
   if (!hasSupabaseConfig || !supabase) {
@@ -30,6 +48,37 @@ function cleanText(value) {
   return text.length > 0 ? text : null;
 }
 
+// Normalizes a single place object into a structured shape.
+function cleanPlace(value) {
+  if (!value) return null;
+
+  if (typeof value === "string") {
+    // Already a JSON string from the frontend — try to parse first.
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object") return cleanPlace(parsed);
+    } catch {
+      // Plain string fallback: treat as city.
+      const trimmed = value.trim();
+      return trimmed ? { country: "", city: trimmed, locality: "", timeLived: "" } : null;
+    }
+  }
+
+  if (typeof value === "object") {
+    const country = cleanText(value.country) || "";
+    const city = cleanText(value.city) || "";
+    const locality = cleanText(value.locality) || "";
+    const timeLived = cleanText(value.timeLived) || "";
+
+    if (!country && !city && !locality && !timeLived) return null;
+
+    return { country, city, locality, timeLived };
+  }
+
+  return null;
+}
+
+// For simple string-list fields (e.g. other_languages).
 function cleanArray(value) {
   if (!value) return [];
   const items = Array.isArray(value) ? value : String(value).split(",");
@@ -38,10 +87,37 @@ function cleanArray(value) {
       if (item && typeof item === "object") {
         return cleanText([item.city, item.country].filter(Boolean).join(", "));
       }
-
       return cleanText(item);
     })
     .filter(Boolean);
+}
+
+// For places_lived — preserves full structure of each entry.
+function cleanPlaceArray(value) {
+  if (!value) return [];
+  const items = Array.isArray(value) ? value : [value];
+  return items.map(cleanPlace).filter(Boolean);
+}
+
+// Safe JSON parse with fallback — handles old flattened string values gracefully.
+function safeParse(val, fallback) {
+  if (val === null || val === undefined) return fallback;
+  if (Array.isArray(val)) {
+    return val.map((item) => {
+      if (typeof item !== "string") return item;
+      try {
+        return JSON.parse(item);
+      } catch {
+        return item;
+      }
+    });
+  }
+  if (typeof val === "object") return val; // already parsed (jsonb column)
+  try {
+    return JSON.parse(val);
+  } catch {
+    return fallback;
+  }
 }
 
 function normalizeUsername(username) {
@@ -58,7 +134,6 @@ function createParticipantId(username) {
   if (LEGACY_PARTICIPANT_ID_PATTERN.test(username)) {
     return username.toUpperCase();
   }
-
   return `B-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
@@ -70,7 +145,6 @@ function errorResponse(message, error) {
   if (process.env.NODE_ENV === "production") {
     return { error: message };
   }
-
   return {
     error: message,
     details: error?.message || "Unknown backend error.",
@@ -98,8 +172,10 @@ function toClientUser(row) {
     otherLanguageCount: row.other_language_count || "",
     otherLanguages: row.other_languages || [],
     comfortLanguage: row.comfort_language || "",
-    placeOfOrigin: row.place_of_origin || "",
-    placesLived: row.places_lived || [],
+    // safeParse handles both jsonb columns (already objects) and
+    // text columns storing JSON strings, and old flattened strings.
+    placeOfOrigin: safeParse(row.place_of_origin, null),
+    placesLived: safeParse(row.places_lived, []),
     consentAccepted: Boolean(row.consent_accepted),
     active: row.active !== false,
   };
@@ -108,7 +184,10 @@ function toClientUser(row) {
 function userPayload(body, { includeParticipantId = false } = {}) {
   const username = normalizeUsername(body.username);
 
-  return {
+  const placeOfOrigin = cleanPlace(body.placeOfOrigin || body.place_of_origin);
+  const placesLived = cleanPlaceArray(body.placesLived || body.places_lived);
+
+  const payload = {
     ...(includeParticipantId
       ? { participant_id: createParticipantId(username) }
       : {}),
@@ -119,18 +198,21 @@ function userPayload(body, { includeParticipantId = false } = {}) {
     email: cleanText(body.email),
     mobile_number: cleanText(body.mobileNumber || body.mobile_number),
     dialect: cleanText(body.dialect),
-    dialects: cleanArray(body.dialects),
-    other_dialect: cleanText(body.otherDialect || body.other_dialect),
     gender: cleanText(body.gender),
     age: cleanText(body.age),
-    other_language_count: cleanText(body.otherLanguageCount || body.other_language_count),
     other_languages: cleanArray(body.otherLanguages || body.other_languages),
     comfort_language: cleanText(body.comfortLanguage || body.comfort_language),
-    place_of_origin: cleanText(body.placeOfOrigin || body.place_of_origin),
-    places_lived: cleanArray(body.placesLived || body.places_lived),
+    // Stored as JSON strings so they survive text/text[] columns without
+    // a schema migration. toClientUser() and safeParse() deserialize on read.
+    place_of_origin: placeOfOrigin !== null ? JSON.stringify(placeOfOrigin) : null,
+    places_lived: placesLived.map((place) => JSON.stringify(place)),
     consent_accepted: Boolean(body.consentAccepted || body.consent_accepted),
     updated_at: new Date().toISOString(),
   };
+
+  return Object.fromEntries(
+    Object.entries(payload).filter(([column]) => APP_USER_WRITE_COLUMNS.has(column))
+  );
 }
 
 function profileUpdatePayload(body) {
@@ -157,7 +239,9 @@ router.post("/users/signup", async (req, res) => {
       });
     }
 
-    if (!req.body.consentAccepted && !req.body.consent_accepted) {
+    const role = normalizeUserRole(req.body.role);
+
+    if (role !== USER_ROLES.RESEARCHER && !req.body.consentAccepted && !req.body.consent_accepted) {
       return res.status(400).json({ error: "Consent must be accepted to sign up." });
     }
 
@@ -213,7 +297,7 @@ router.post("/users/login", async (req, res) => {
     if (error) throw error;
 
     if (!user) {
-      return res.status(404).json({ error: "No user found for that username." });
+      return res.status(404).json({ error: "No account found with that username. Check for typos or sign up first." });
     }
 
     if (user.active === false) {

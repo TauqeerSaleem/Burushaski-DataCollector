@@ -56,9 +56,7 @@ function splitPools(allSentences, recordedIdsByUser, globalCountsByPromptId, dia
 
 function buildValidationPool(allTasks, validatedIds, globalValidationCounts) {
   const validatedSet = new Set(validatedIds);
-
   const eligible = allTasks.filter((t) => !validatedSet.has(t.id));
-
   return assignWeights(eligible, globalValidationCounts, "id");
 }
 
@@ -70,37 +68,34 @@ export function pickNextPrompt(
   const { textPool, imagePool } = splitPools(allSentences, recordedIdsByUser, globalCountsByPromptId, dialect);
   const validationPool = buildValidationPool(allValidationTasks, validatedIds, globalValidationCounts);
 
-  const isSpecialTurn = pickCount % 4 === 3;
+  const turn = pickCount % 4; // 0,1 = text, 2 = validation, 3 = image
 
-  if (!isSpecialTurn) {
-    // Text turn — fall back to image or validation if text pool empty
+  if (turn === 0 || turn === 1) {
+    // Text turn — fall back to validation then image if text pool empty
     return weightedRandomPick(textPool)
+      || weightedRandomPick(validationPool)
       || weightedRandomPick(imagePool)
+      || null;
+  }
+
+  if (turn === 2) {
+    // Validation turn — fall back to text then image if validation pool empty
+    return weightedRandomPick(validationPool)
+      || weightedRandomPick(textPool)
+      || weightedRandomPick(imagePool)
+      || null;
+  }
+
+  if (turn === 3) {
+    // Image turn — fall back to text then validation if image pool empty
+    const picked = weightedRandomPick(imagePool);
+    if (picked) return { ...picked, _cardType: "image" };
+    return weightedRandomPick(textPool)
       || weightedRandomPick(validationPool)
       || null;
   }
 
-  // Special turn — weighted random between image and validation pools
-  const hasImage = imagePool.length > 0;
-  const hasValidation = validationPool.length > 0;
-
-  if (hasImage && hasValidation) {
-    // Pick randomly between the two pools (each pool's total weight determines odds)
-    const imageTotalWeight = imagePool.reduce((s, i) => s + i.effectiveWeight, 0);
-    const validationTotalWeight = validationPool.reduce((s, i) => s + i.effectiveWeight, 0);
-    const rand = Math.random() * (imageTotalWeight + validationTotalWeight);
-    if (rand < imageTotalWeight) {
-      return { ...weightedRandomPick(imagePool), _cardType: "image" };
-    } else {
-      return { ...weightedRandomPick(validationPool), _cardType: "validation" };
-    }
-  }
-
-  if (hasImage) return { ...weightedRandomPick(imagePool), _cardType: "image" };
-  if (hasValidation) return { ...weightedRandomPick(validationPool), _cardType: "validation" };
-
-  // Fall back to text if neither available
-  return weightedRandomPick(textPool) || null;
+  return null;
 }
 
 export function buildPool(allSentences, recordedIdsByUser, globalCountsByPromptId, dialect) {

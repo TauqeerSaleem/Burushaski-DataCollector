@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Navigate, useNavigate, Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
+import { subscribeToPush } from "../hooks/usePushNotifications";
 import { USER_ROLES } from "../utils/roles";
-import { saveSignupDraft } from "../utils/signupDraft";
+import { signupUser } from "../utils/userApi";
+import { clearSignupDraft, draftToSignupPayload, saveSignupDraft } from "../utils/signupDraft";
 
 const COUNTRIES = [
   "Afghanistan","Albania","Algeria","Andorra","Angola","Argentina","Armenia","Australia","Austria","Azerbaijan",
@@ -25,6 +27,7 @@ const COUNTRIES = [
 ];
 
 export default function Signup() {
+  const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [usernameError, setUsernameError] = useState("");
 
@@ -57,13 +60,17 @@ export default function Signup() {
   const [livedTimeLived, setLivedTimeLived] = useState("");
   const [placesLived, setPlacesLived] = useState([]);
   const [placesLivedError, setPlacesLivedError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const { user } = useUser();
+  const { user, setUser } = useUser();
   const navigate = useNavigate();
 
   if (user) {
     return <Navigate to="/dashboard" replace />;
   }
+
+  const isResearcher = role === USER_ROLES.RESEARCHER;
 
   const validateUsername = (val) => /^[a-zA-Z0-9._-]{3,32}$/.test(val);
   const validateEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
@@ -106,10 +113,6 @@ export default function Signup() {
     );
   };
 
-  const handleComfortLangChange = (e) => {
-    setComfortLang(e.target.value);
-  };
-
   const handleOriginCityChange = (e) => {
     const value = e.target.value;
     setOriginCity(value);
@@ -130,31 +133,76 @@ export default function Signup() {
     }
   };
 
-  const addPlaceLived = () => {
-    if (!livedCountry || !livedCity || !validateCityName(livedCity)) {
-      setPlacesLivedError("Select a country and enter a valid city before adding");
-      return;
+  const handleCityBlur = () => {
+    if (livedCountry && livedCity && validateCityName(livedCity)) {
+      const isDuplicate = placesLived.some(
+        (p) => p.city.toLowerCase() === livedCity.trim().toLowerCase() && p.country === livedCountry
+      );
+      if (!isDuplicate) {
+        setPlacesLived((prev) => [...prev, {
+          country: livedCountry,
+          city: livedCity.trim(),
+          locality: "",
+          timeLived: "",
+        }]);
+      }
     }
-    setPlacesLived((prev) => [...prev, { country: livedCountry, city: livedCity.trim(), locality: livedLocality.trim(), timeLived: livedTimeLived.trim() }]);
+  };
+
+  const updateLastPlace = (locality, timeLived) => {
+    setPlacesLived((prev) => {
+      if (prev.length === 0) return prev;
+      const updated = [...prev];
+      const last = updated[updated.length - 1];
+      if (
+        last.city.toLowerCase() === livedCity.trim().toLowerCase() &&
+        last.country === livedCountry
+      ) {
+        updated[updated.length - 1] = {
+          ...last,
+          locality: locality.trim(),
+          timeLived: timeLived.trim(),
+        };
+      }
+      return updated;
+    });
+  };
+
+  const commitCurrentPlace = () => {
+    if (!livedCountry || !livedCity || !validateCityName(livedCity)) return;
+    const isDuplicate = placesLived.some(
+      (p) => p.city.toLowerCase() === livedCity.trim().toLowerCase() && p.country === livedCountry
+    );
+    if (!isDuplicate) {
+      setPlacesLived((prev) => [...prev, {
+        country: livedCountry,
+        city: livedCity.trim(),
+        locality: livedLocality.trim(),
+        timeLived: livedTimeLived.trim(),
+      }]);
+    }
     setLivedCountry("Pakistan");
     setLivedCity("");
     setLivedLocality("");
     setLivedTimeLived("");
     setPlacesLivedError("");
+    setLivedCityError("");
   };
 
   const removePlaceLived = (index) => {
     setPlacesLived((prev) => prev.filter((_, i) => i !== index));
   };
 
-
-  const canSubmit =
+  const hasBasicInfo =
+    (!isResearcher || name.trim()) &&
     username &&
     validateUsername(username) &&
     role &&
     contactPref &&
     (contactPref !== "email" || (email && validateEmail(email))) &&
-    (contactPref !== "mobile" || (mobile && validateMobile(mobile))) &&
+    (contactPref !== "mobile" || (mobile && validateMobile(mobile)));
+
+  const hasCrowdsourcedInfo =
     age &&
     gender &&
     dialect &&
@@ -165,10 +213,13 @@ export default function Signup() {
     originLocality &&
     placesLived.length > 0;
 
-  const submit = () => {
+  const canSubmit = hasBasicInfo && (isResearcher || hasCrowdsourcedInfo) && !submitting;
+
+  const submit = async () => {
     if (!canSubmit) return;
 
     const draft = {
+      name: name.trim(),
       username,
       dialect,
       dialects: dialect ? [dialect] : [],
@@ -185,6 +236,31 @@ export default function Signup() {
       placesLived,
     };
 
+    if (isResearcher) {
+      setSubmitError("");
+      setSubmitting(true);
+
+      try {
+        const researcher = await signupUser({
+          ...draftToSignupPayload(draft),
+          consentAccepted: false,
+        });
+        clearSignupDraft();
+        setUser(researcher);
+
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          await subscribeToPush(researcher);
+        }
+
+        navigate("/dashboard", { replace: true });
+      } catch (err) {
+        setSubmitError(err.message || "Unable to complete signup.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     saveSignupDraft(draft);
     navigate("/consent");
   };
@@ -192,7 +268,6 @@ export default function Signup() {
   return (
     <div className="min-h-screen px-4 py-8">
       <div className="w-full max-w-xl mx-auto space-y-3">
-
         <div className="rounded-2xl bg-gradient-to-b from-neutral-900 to-neutral-950 p-6 shadow-2xl border border-neutral-800 space-y-6">
 
           {/* Header */}
@@ -204,8 +279,9 @@ export default function Signup() {
               Help us record Burushaski sentences
             </p>
             <p className="text-xs text-gray-500 leading-relaxed">
-              We are collecting short audio recordings of Burushaski speech
-              along with basic demographic information for academic research.
+              {isResearcher
+                ? "Create your researcher access profile for the project dashboard."
+                : "We are collecting short audio recordings of Burushaski speech along with basic demographic information for academic research."}
             </p>
           </div>
 
@@ -227,7 +303,7 @@ export default function Signup() {
                 {
                   value: USER_ROLES.RESEARCHER,
                   title: "Researcher",
-                  desc: "Upload interviews and longer-form recordings.",
+                  desc: "Only select this if you have been explicitly assigned this role by the project admin.",
                 },
               ].map((opt) => (
                 <label
@@ -257,6 +333,21 @@ export default function Signup() {
 
           <div className="space-y-4">
 
+            {/* Name */}
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400">
+                Name {isResearcher ? "*" : "(optional)"}
+              </label>
+              <input
+                type="text"
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                placeholder="Your name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
+              />
+            </div>
+
             {/* Username */}
             <div className="space-y-1">
               <label className="text-xs text-gray-400">Username *</label>
@@ -284,14 +375,8 @@ export default function Signup() {
                 value={contactPref}
                 onChange={(e) => {
                   setContactPref(e.target.value);
-                  if (e.target.value !== "mobile") {
-                    setMobile("");
-                    setMobileError("");
-                  }
-                  if (e.target.value !== "email") {
-                    setEmail("");
-                    setEmailError("");
-                  }
+                  if (e.target.value !== "mobile") { setMobile(""); setMobileError(""); }
+                  if (e.target.value !== "email") { setEmail(""); setEmailError(""); }
                 }}
               >
                 <option value="">Select an option</option>
@@ -300,7 +385,7 @@ export default function Signup() {
               </select>
             </div>
 
-            {/* Email address */}
+            {/* Email */}
             {contactPref === "email" && (
               <div className="space-y-1">
                 <label className="text-xs text-gray-400">Email Address *</label>
@@ -320,7 +405,7 @@ export default function Signup() {
               </div>
             )}
 
-            {/* Mobile number */}
+            {/* Mobile */}
             {contactPref === "mobile" && (
               <div className="space-y-1">
                 <label className="text-xs text-gray-400">Mobile Number *</label>
@@ -336,6 +421,8 @@ export default function Signup() {
               </div>
             )}
 
+            {!isResearcher && (
+              <>
             {/* Age */}
             <div className="space-y-1">
               <label className="text-xs text-gray-400">What is your age? *</label>
@@ -418,6 +505,7 @@ export default function Signup() {
                   placeholder="City"
                   value={livedCity}
                   onChange={handleLivedCityChange}
+                  onBlur={handleCityBlur}
                 />
               </div>
               {livedCityError && <p className="text-xs text-red-400">{livedCityError}</p>}
@@ -425,22 +513,20 @@ export default function Signup() {
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
                 placeholder="Locality / Colony / Mohallah (optional)"
                 value={livedLocality}
-                onChange={(e) => setLivedLocality(e.target.value)}
+                onChange={(e) => {
+                  setLivedLocality(e.target.value);
+                  updateLastPlace(e.target.value, livedTimeLived);
+                }}
               />
               <input
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
                 placeholder="Time lived here (optional, e.g. 2 years)"
                 value={livedTimeLived}
-                onChange={(e) => setLivedTimeLived(e.target.value)}
+                onChange={(e) => {
+                  setLivedTimeLived(e.target.value);
+                  updateLastPlace(livedLocality, e.target.value);
+                }}
               />
-
-              <button
-                type="button"
-                onClick={addPlaceLived}
-                className="w-full rounded-lg bg-neutral-800 border border-neutral-700 py-1.5 text-sm text-white hover:bg-neutral-700"
-              >
-                + Add place
-              </button>
 
               {placesLivedError && <p className="text-xs text-red-400">{placesLivedError}</p>}
 
@@ -463,6 +549,14 @@ export default function Signup() {
                   ))}
                 </div>
               )}
+
+              <button
+                type="button"
+                onClick={commitCurrentPlace}
+                className="w-full rounded-lg bg-neutral-800 border border-neutral-700 py-1.5 text-sm text-white hover:bg-neutral-700"
+              >
+                + Add another place
+              </button>
             </div>
 
             {/* Dialect */}
@@ -528,17 +622,25 @@ export default function Signup() {
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
                 placeholder="e.g. Burushaski"
                 value={comfortLang}
-                onChange={handleComfortLangChange}
+                onChange={(e) => setComfortLang(e.target.value)}
               />
             </div>
+              </>
+            )}
           </div>
+
+          {submitError && <p className="text-xs text-red-400">{submitError}</p>}
 
           <button
             onClick={submit}
             disabled={!canSubmit}
             className="w-full rounded-lg bg-yellow-400 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Next: Review Consent Form
+            {submitting
+              ? "Creating account..."
+              : isResearcher
+                ? "Create Account"
+                : "Next: Review Consent Form"}
           </button>
 
           <p className="text-center text-xs text-gray-500">
