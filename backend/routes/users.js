@@ -232,6 +232,31 @@ function profileUpdatePayload(body) {
   return payload;
 }
 
+router.get("/users/check-username/:username", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const username = normalizeUsername(req.params.username);
+
+    if (!username || !validateUsername(username)) {
+      return res.json({ available: false });
+    }
+
+    const { data, error } = await supabase
+      .from("app_users")
+      .select("id")
+      .eq("username", username)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    return res.json({ available: !data });
+  } catch (error) {
+    console.error("Username check failed:", error.message);
+    return res.status(500).json(errorResponse("Unable to check username.", error));
+  }
+});
+
 router.post("/users/signup", async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;

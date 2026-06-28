@@ -53,6 +53,13 @@ function normalizeApiUser(user) {
   };
 }
 
+export async function checkUsernameAvailable(username) {
+  const data = await request(`/api/users/check-username/${encodeURIComponent(username)}`, {
+    method: "GET",
+  });
+  return data.available;
+}
+
 export async function signupUser(profile) {
   const data = await request("/api/users/signup", {
     method: "POST",

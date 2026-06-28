@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Navigate, useNavigate, Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import { subscribeToPush } from "../hooks/usePushNotifications";
 import { USER_ROLES } from "../utils/roles";
-import { signupUser } from "../utils/userApi";
+import { signupUser, checkUsernameAvailable } from "../utils/userApi";
 import { clearSignupDraft, draftToSignupPayload, saveSignupDraft } from "../utils/signupDraft";
 
 const COUNTRIES = [
@@ -30,6 +30,9 @@ export default function Signup() {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [usernameError, setUsernameError] = useState("");
+  const [usernameAvailable, setUsernameAvailable] = useState(null);
+  const [usernameChecking, setUsernameChecking] = useState(false);
+  const usernameCheckTimer = useRef(null);
 
   const [role, setRole] = useState(USER_ROLES.VOLUNTEER);
 
@@ -83,10 +86,28 @@ export default function Signup() {
   const handleUsernameChange = (e) => {
     const value = e.target.value;
     setUsername(value);
+    setUsernameAvailable(null);
+    setUsernameChecking(false);
+    clearTimeout(usernameCheckTimer.current);
+
     if (value && !validateUsername(value)) {
       setUsernameError("3–32 characters, letters, numbers, dots, underscores, hyphens only");
-    } else {
-      setUsernameError("");
+      return;
+    }
+    setUsernameError("");
+
+    if (value && validateUsername(value)) {
+      setUsernameChecking(true);
+      usernameCheckTimer.current = setTimeout(async () => {
+        try {
+          const available = await checkUsernameAvailable(value);
+          setUsernameAvailable(available);
+        } catch {
+          setUsernameAvailable(null);
+        } finally {
+          setUsernameChecking(false);
+        }
+      }, 500);
     }
   };
 
@@ -345,6 +366,9 @@ export default function Signup() {
                     spellCheck={false}
                   />
                   {usernameError && <p className="text-xs text-red-400">{usernameError}</p>}
+                  {!usernameError && usernameChecking && <p className="text-xs text-gray-500">Checking availability...</p>}
+                  {!usernameError && !usernameChecking && usernameAvailable === true && <p className="text-xs text-green-400">✓ Username is available</p>}
+                  {!usernameError && !usernameChecking && usernameAvailable === false && <p className="text-xs text-red-400">✗ Username is already taken</p>}
                 </div>
 
                 {/* Contact preference */}
