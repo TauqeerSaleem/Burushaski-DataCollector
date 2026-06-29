@@ -93,7 +93,7 @@ app.use((err, req, res, next) => {
   console.error("Stack:", err.stack);
 
   res.status(500).json({
-    error: err.message,
+    error: process.env.NODE_ENV === "production" ? "Internal server error." : err.message,
     timestamp: new Date().toISOString(),
   });
 });

@@ -8,7 +8,7 @@ import { uploadRecording } from "../utils/uploadRecording";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   (import.meta.env.DEV ? "http://localhost:3001" : "");
-const IMAGE_DESCRIPTION_MAX_RECORDING_MS = 5 * 60 * 1000;
+const MAX_RECORDING_MS = 5 * 60 * 1000;
 
 export default function Dashboard() {
   const { user, setUser } = useUser();
@@ -35,6 +35,7 @@ export default function Dashboard() {
   const audioUrlRef = useRef(null);
   const recordingLimitTimerRef = useRef(null);
   const recordingStartedAtRef = useRef(null);
+  const recordingDurationMsRef = useRef(0);
   const [allValidationTasks, setAllValidationTasks] = useState([]);
   const [validatedIds, setValidatedIds] = useState([]);
   const [globalValidationCounts, setGlobalValidationCounts] = useState({});
@@ -153,6 +154,7 @@ const load = async () => {
   const clearRecordingState = () => {
     clearRecordingLimitTimer();
     recordingStartedAtRef.current = null;
+    recordingDurationMsRef.current = 0;
     if (audioUrlRef.current) {
       URL.revokeObjectURL(audioUrlRef.current);
       audioUrlRef.current = null;
@@ -178,19 +180,17 @@ const load = async () => {
       await startRecording();
       recordingStartedAtRef.current = Date.now();
 
-      if (currentCard?.prompt_type === "picture_description") {
-        clearRecordingLimitTimer();
-        recordingLimitTimerRef.current = setTimeout(async () => {
-          recordingLimitTimerRef.current = null;
-          setUploadError("Recording stopped at the 5-minute limit. Review it, then submit or re-record.");
-          try {
-            await handleStopRecording();
-          } catch (err) {
-            console.error("Could not stop recording at limit:", err);
-            setUploadError("Recording reached the 5-minute limit, but could not stop automatically. Please stop it manually.");
-          }
-        }, IMAGE_DESCRIPTION_MAX_RECORDING_MS);
-      }
+      clearRecordingLimitTimer();
+      recordingLimitTimerRef.current = setTimeout(async () => {
+        recordingLimitTimerRef.current = null;
+        setUploadError("Recording stopped at the 5-minute limit. Submit what you recorded or restart.");
+        try {
+          await handleStopRecording();
+        } catch (err) {
+          console.error("Could not stop recording at limit:", err);
+          setUploadError("Recording reached the 5-minute limit, but could not stop automatically. Please stop it manually.");
+        }
+      }, MAX_RECORDING_MS);
     } catch (err) {
       console.error("Could not start recording:", err);
       setUploadError("Could not access microphone. Check permissions and try again.");
@@ -199,6 +199,9 @@ const load = async () => {
 
   const handleStopRecording = async () => {
     clearRecordingLimitTimer();
+    recordingDurationMsRef.current = recordingStartedAtRef.current
+      ? Math.min(Date.now() - recordingStartedAtRef.current, MAX_RECORDING_MS)
+      : 0;
     const blob = await stopRecording();
     setAudioBlob(blob);
 
@@ -230,7 +233,7 @@ const load = async () => {
         correctionFlag,
         suggestedCorrection,
         promptType: currentCard.prompt_type,
-        durationMs: recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0,
+        durationMs: recordingDurationMsRef.current,
       });
 
       setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
@@ -244,7 +247,19 @@ const load = async () => {
       pickNextCard(pickCount);
     } catch (err) {
       console.error("Upload failed:", err);
-      setUploadError("Upload failed. Please check your connection and try again.");
+      if (err.message?.includes("no longer active")) {
+        clearRecordingState();
+        setAllSentences((current) =>
+          (current || []).filter(
+            (prompt) =>
+              prompt.prompt_id !== currentCard.prompt_id ||
+              prompt.module_id !== currentCard.module_id
+          )
+        );
+        setUploadError("That prompt was deactivated by an administrator. Loading another prompt.");
+      } else {
+        setUploadError(err.message || "Upload failed. Please check your connection and try again.");
+      }
     } finally {
       setUploading(false);
     }
@@ -326,14 +341,6 @@ const recordedForDialect = allSentences
       {!loading && !error && currentCard && currentCard._cardType !== "validation" && (
         <div className="bg-white text-black rounded-3xl shadow-2xl p-10 md:p-14 space-y-8 max-w-2xl mx-auto min-h-[420px] flex flex-col justify-center">
           <div className="text-center space-y-4">
-  {currentCard.media_type === "image" && currentCard.media_url && (
-    <img
-      src={currentCard.media_url}
-      alt=""
-      className="mx-auto max-h-64 w-full rounded-2xl object-contain bg-gray-100"
-    />
-  )}
-
   {currentCard.prompt_type === "picture_description" ? (
     <p className="font-bold text-2xl leading-relaxed">
       {currentCard.english}
@@ -349,6 +356,20 @@ const recordedForDialect = allSentences
     </>
   )}
 
+  {currentCard.media_type === "image" && currentCard.media_url && (
+    <img
+      src={currentCard.media_url}
+      alt=""
+      className="mx-auto max-h-64 w-full rounded-2xl object-contain bg-gray-100"
+    />
+  )}
+
+  {currentCard.transliteration && currentCard.prompt_type === "picture_description" && (
+    <p className="text-base font-medium leading-relaxed text-gray-700">
+      {currentCard.transliteration}
+    </p>
+  )}
+
   {currentCard.transliteration && currentCard.prompt_type !== "picture_description" && (
     <details className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-center inline-block mx-auto">
 <summary className="cursor-pointer text-xs font-semibold text-gray-500">
@@ -356,9 +377,6 @@ const recordedForDialect = allSentences
 </summary>
       <p className="text-sm text-gray-600 italic mt-2">{currentCard.transliteration}</p>
     </details>
-  )}
-  {currentCard.prompt_type === "picture_description" && (
-    <p className="text-sm text-gray-500">Image description recordings stop automatically at 5 minutes.</p>
   )}
 </div>
 

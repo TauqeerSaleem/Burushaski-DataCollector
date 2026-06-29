@@ -24,7 +24,7 @@ const MAX_DATA_PAGE_SIZE = 200;
 const EXPORT_LIMIT = 50000;
 const MAX_PROMPT_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_RECORDING_BYTES = 30 * 1024 * 1024;
-const MAX_IMAGE_DESCRIPTION_RECORDING_MS = 5 * 60 * 1000;
+const MAX_RECORDING_MS = 5 * 60 * 1000;
 const PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
 const ALLOWED_PROMPT_MEDIA_TYPES = new Set([
   "image/jpeg",
@@ -214,7 +214,8 @@ function generatePromptId(payload) {
 
 function csvEscape(value) {
   if (value === undefined || value === null) return "";
-  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+  const rawText = typeof value === "object" ? JSON.stringify(value) : String(value);
+  const text = /^[=+\-@]/.test(rawText) ? `'${rawText}` : rawText;
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
@@ -257,7 +258,8 @@ async function requireAdmin(req, res, next) {
     req.admin = admin;
     return next();
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("Admin authorization failed:", error.message);
+    return res.status(500).json({ error: "Unable to verify admin session." });
   }
 }
 
@@ -565,7 +567,7 @@ async function writeActivity(admin, action, targetType, targetId, details = {}) 
 async function requireActiveParticipant(participantId, res) {
   const { data, error } = await supabase
     .from("app_users")
-    .select("participant_id, role, active")
+    .select("participant_id, role, active, dialect, gender")
     .eq("participant_id", participantId)
     .maybeSingle();
 
@@ -615,6 +617,14 @@ router.get("/volunteer-dashboard", async (req, res) => {
 
     if (!dialect || !participantId) {
       return res.status(400).json({ error: "Dialect and participant ID are required." });
+    }
+
+    const participant = await requireActiveParticipant(participantId, res);
+    if (!participant) return;
+
+    const participantDialect = cleanDialect(participant.dialect);
+    if (!participantDialect || participantDialect !== dialect) {
+      return res.status(403).json({ error: "Participant dialect does not match this request." });
     }
 
     const [promptsResult, myRecordingsResult, allRecordingsResult] = await Promise.all([
@@ -679,37 +689,45 @@ router.post(
       }
 
       const participantId = cleanText(req.get("x-participant-id"));
-      const dialect = cleanText(req.get("x-dialect"));
-      const gender = cleanText(req.get("x-gender"));
       const moduleId = cleanText(req.get("x-module-id"));
       const sentenceId = cleanText(req.get("x-sentence-id"));
       const transcript = cleanHeaderText(req.get("x-transcript"));
       const englishTranslation = cleanHeaderText(req.get("x-english-translation"));
       const suggestedCorrection = cleanHeaderText(req.get("x-suggested-correction"));
       const correctionFlag = cleanBooleanHeader(req.get("x-correction-flag"));
-      let promptType = cleanText(req.get("x-prompt-type"));
       const recordingDurationMs = cleanInteger(req.get("x-recording-duration-ms"), 0, 0);
 
       if (!participantId || !moduleId || !sentenceId) {
         return res.status(400).json({ error: "Participant, module, and prompt IDs are required." });
       }
 
-      const { data: promptRow, error: promptTypeError } = await supabase
+      if (recordingDurationMs > MAX_RECORDING_MS + 1000) {
+        return res.status(413).json({ error: "Recordings must be 5 minutes or shorter." });
+      }
+
+      const participant = await requireActiveParticipant(participantId, res);
+      if (!participant) return;
+
+      const { data: prompt, error: promptError } = await supabase
         .from("prompt_bank")
-        .select("prompt_type")
+        .select("active, dialect")
         .eq("module_id", moduleId)
         .eq("prompt_id", sentenceId)
         .maybeSingle();
 
-      if (!promptTypeError && promptRow?.prompt_type) {
-        promptType = promptRow.prompt_type;
+      if (promptError) throw promptError;
+      if (!prompt || prompt.active === false) {
+        return res.status(409).json({ error: "This prompt is no longer active. Load another prompt and try again." });
       }
 
-      if (promptType === "picture_description" && recordingDurationMs > MAX_IMAGE_DESCRIPTION_RECORDING_MS + 1000) {
-        return res.status(413).json({ error: "Image description recordings must be 5 minutes or shorter." });
+      const participantDialect = cleanDialect(participant.dialect);
+      const promptDialect = cleanDialect(prompt.dialect);
+      if (promptDialect && promptDialect !== "all" && promptDialect !== participantDialect) {
+        return res.status(403).json({ error: "This prompt is not assigned to the participant's dialect." });
       }
 
-      if (!(await requireActiveParticipant(participantId, res))) return;
+      const dialect = participantDialect || "unknown";
+      const gender = cleanText(participant.gender);
 
       const { data: existing, error: existingError } = await supabase
         .from("recordings")
@@ -846,9 +864,14 @@ router.post(
       const sentenceId = cleanText(req.get("x-sentence-id"));
       const sentenceNumber = cleanInteger(req.get("x-sentence-number"), null, 1);
       const correction = cleanEncodedHeader(req.get("x-correction"));
+      const recordingDurationMs = cleanInteger(req.get("x-recording-duration-ms"), 0, 0);
 
       if (!participantId || !moduleId || !sentenceId || !correction) {
         return res.status(400).json({ error: "Participant, prompt, and correction are required." });
+      }
+
+      if (recordingDurationMs > MAX_RECORDING_MS + 1000) {
+        return res.status(413).json({ error: "Recordings must be 5 minutes or shorter." });
       }
 
       if (!(await requireActiveParticipant(participantId, res))) return;
@@ -2124,6 +2147,12 @@ router.get("/validation-tasks", async (req, res) => {
       return res.status(400).json({ error: "Dialect and participant ID are required." });
     }
 
+    const participant = await requireActiveParticipant(participantId, res);
+    if (!participant) return;
+    if (cleanDialect(participant.dialect) !== dialect) {
+      return res.status(403).json({ error: "Participant dialect does not match this request." });
+    }
+
     // Fetch recordings in volunteer's dialect, excluding their own
     const { data: recordings, error: rErr } = await supabase
       .from("recordings")
@@ -2225,6 +2254,8 @@ router.post("/validations", async (req, res) => {
     if (!recordingId || !participantId) {
       return res.status(400).json({ error: "Recording ID and participant ID are required." });
     }
+
+    if (!(await requireActiveParticipant(participantId, res))) return;
 
     // Check not validating own recording
     const { data: recording, error: rErr } = await supabase

@@ -28,6 +28,7 @@ export async function syncPendingRecordings(user) {
         englishTranslation: rec.englishTranslation,
         correctionFlag: rec.correctionFlag,
         suggestedCorrection: rec.suggestedCorrection,
+        durationMs: rec.durationMs,
       });
 
       await db.recordings.update(rec.id, {

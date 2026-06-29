@@ -1,8 +1,9 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   (import.meta.env.DEV ? "http://localhost:3001" : "");
+const MAX_RECORDING_MS = 5 * 60 * 1000;
 
 export default function FeedbackModal({
   open,
@@ -19,17 +20,31 @@ export default function FeedbackModal({
   const [audioUrl, setAudioUrl] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [recordingMessage, setRecordingMessage] = useState("");
 
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
+  const streamRef = useRef(null);
+  const recordingLimitTimerRef = useRef(null);
+  const recordingStartedAtRef = useRef(null);
+  const recordingDurationMsRef = useRef(0);
+
+  useEffect(() => () => {
+    if (recordingLimitTimerRef.current) clearTimeout(recordingLimitTimerRef.current);
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+  }, [audioUrl]);
 
   if (!open) return null;
 
   // ── Recording helpers ──────────────────────────────────────────
   const startRecording = async () => {
     setError(null);
+    setRecordingMessage("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
@@ -43,18 +58,45 @@ export default function FeedbackModal({
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
         stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       };
 
       mediaRecorder.start();
+      recordingStartedAtRef.current = Date.now();
       setIsRecording(true);
+      recordingLimitTimerRef.current = setTimeout(() => {
+        recordingLimitTimerRef.current = null;
+        recordingDurationMsRef.current = MAX_RECORDING_MS;
+        setRecordingMessage("Recording stopped at the 5-minute limit. Submit what you recorded or restart.");
+        stopRecording();
+      }, MAX_RECORDING_MS);
     } catch {
       setError("Microphone access denied. Please allow microphone and try again.");
     }
   };
 
   const stopRecording = () => {
+    if (recordingLimitTimerRef.current) {
+      clearTimeout(recordingLimitTimerRef.current);
+      recordingLimitTimerRef.current = null;
+    }
+    if (!recordingDurationMsRef.current && recordingStartedAtRef.current) {
+      recordingDurationMsRef.current = Math.min(
+        Date.now() - recordingStartedAtRef.current,
+        MAX_RECORDING_MS
+      );
+    }
     mediaRecorderRef.current?.stop();
     setIsRecording(false);
+  };
+
+  const restartRecording = () => {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioBlob(null);
+    setAudioUrl(null);
+    setRecordingMessage("");
+    recordingStartedAtRef.current = null;
+    recordingDurationMsRef.current = 0;
   };
 
   // ── Submit ─────────────────────────────────────────────────────
@@ -75,6 +117,7 @@ export default function FeedbackModal({
           "X-Sentence-Id": sentenceId,
           "X-Sentence-Number": String(sentenceNumber),
           "X-Correction": encodeURIComponent(correctEnglish.trim()),
+          "X-Recording-Duration-Ms": String(recordingDurationMsRef.current),
         },
         body: audioBlob,
       });
@@ -175,7 +218,15 @@ export default function FeedbackModal({
             {/* Playback */}
             {audioUrl && (
               <div className="space-y-2">
+                {recordingMessage && <p className="text-sm text-amber-700">{recordingMessage}</p>}
                 <audio controls src={audioUrl} className="w-full h-10" />
+                <button
+                  type="button"
+                  onClick={restartRecording}
+                  className="px-3 py-1 rounded bg-gray-200 text-sm font-medium text-gray-800"
+                >
+                  Restart
+                </button>
               </div>
             )}
           </div>
