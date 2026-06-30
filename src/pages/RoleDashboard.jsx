@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import Dashboard from "./Dashboard";
 import { createContribution, getUserContributions } from "../utils/userApi";
@@ -87,14 +87,25 @@ function SubmissionList({ contributions, loading }) {
   );
 }
 
-function DashboardShell({ role, title, description, children }) {
+function DashboardShell({ role, title, description, onLogout, children }) {
   return (
     <div className="min-h-screen bg-neutral-950 px-4 py-8 text-white">
       <div className="mx-auto max-w-3xl space-y-6">
-        <div className="space-y-2">
-          <p className="text-sm font-semibold text-yellow-400">{getRoleLabel(role)}</p>
-          <h1 className="text-3xl font-bold">{title}</h1>
-          <p className="text-neutral-300">{description}</p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-yellow-400">{getRoleLabel(role)}</p>
+            <h1 className="text-3xl font-bold">{title}</h1>
+            <p className="text-neutral-300">{description}</p>
+          </div>
+          {onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-600"
+            >
+              Logout
+            </button>
+          )}
         </div>
         {children}
       </div>
@@ -266,7 +277,7 @@ function ContentContributorDashboard({ user, role }) {
   );
 }
 
-function ResearcherDashboard({ user, role }) {
+function ResearcherDashboard({ user, role, onLogout }) {
   const [form, setForm] = useState(initialResearcherForm);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
@@ -304,6 +315,7 @@ function ResearcherDashboard({ user, role }) {
       role={role}
       title="Researcher Dashboard"
       description="Submit supervised long-form recordings with speaker metadata, turn-taking notes, transcripts, and translations."
+      onLogout={onLogout}
     >
       <form
         onSubmit={handleSubmit}
@@ -409,7 +421,8 @@ function AdminDashboard({ role }) {
 }
 
 export default function RoleDashboard() {
-  const { user } = useUser();
+  const { user, setUser } = useUser();
+  const navigate = useNavigate();
 
   if (!user) {
     return <Navigate to="/login" replace />;
@@ -426,7 +439,17 @@ export default function RoleDashboard() {
   }
 
   if (role === USER_ROLES.RESEARCHER) {
-    return <ResearcherDashboard user={user} role={role} />;
+    return (
+      <ResearcherDashboard
+        user={user}
+        role={role}
+        onLogout={() => {
+          setUser(null);
+          localStorage.removeItem("hasSeenInstructions");
+          navigate("/", { replace: true });
+        }}
+      />
+    );
   }
 
   return <AdminDashboard role={role} />;

@@ -63,6 +63,9 @@ const defaultPromptGroups = [
   "Image Prompts",
 ];
 
+const DEFAULT_IMAGE_PROMPT_TEXT =
+  "Describe what is happening in this image. There are no right or wrong answers.";
+
 const participantRoleOptions = [
   USER_ROLES.VOLUNTEER,
   USER_ROLES.CONTENT_CONTRIBUTOR,
@@ -71,16 +74,16 @@ const participantRoleOptions = [
 
 const emptyPrompt = {
   promptId: "",
-  moduleId: "general-prompts",
-  moduleTitle: "General Prompts",
-  promptType: "translation",
+  moduleId: "image-prompts",
+  moduleTitle: "Image Prompts",
+  promptType: "picture_description",
   legacyPromptType: "",
   dialect: "",
-  english: "",
+  english: DEFAULT_IMAGE_PROMPT_TEXT,
   transliteration: "",
   mediaUrl: "",
-  mediaType: "none",
-  difficulty: "short",
+  mediaType: "image",
+  difficulty: "medium",
   curriculumStage: "",
   grammaticalCategory: "",
   weight: 1,
@@ -308,7 +311,7 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
   const [form, setForm] = useState(emptyPrompt);
   const [editingId, setEditingId] = useState(null);
   const [filters, setFilters] = useState({ search: "", dialect: "all", type: "all", status: "active" });
-  const [groupMode, setGroupMode] = useState("General Prompts");
+  const [groupMode, setGroupMode] = useState("Image Prompts");
   const [newGroupTitle, setNewGroupTitle] = useState("");
   const [sort, setSort] = useState({ key: "moduleTitle", direction: "asc" });
   const [error, setError] = useState("");
@@ -389,12 +392,20 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
       return;
     }
 
+    const isImagePrompt = value === "Image Prompts";
     setForm({
       ...form,
       moduleTitle: value,
       moduleId: slugify(value),
       grammaticalCategory: value,
       curriculumStage: value,
+      promptType: isImagePrompt ? "picture_description" : "translation",
+      mediaType: isImagePrompt ? "image" : "none",
+      mediaUrl: isImagePrompt ? form.mediaUrl : "",
+      difficulty: isImagePrompt ? "medium" : "short",
+      english: isImagePrompt
+        ? form.english.trim() ? form.english : DEFAULT_IMAGE_PROMPT_TEXT
+        : form.english === DEFAULT_IMAGE_PROMPT_TEXT ? "" : form.english,
     });
   };
 
@@ -428,10 +439,10 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
     }));
   };
 
-  const resetPromptForm = () => {
-    setForm(emptyPrompt);
+  const resetPromptForm = (imagePromptText = DEFAULT_IMAGE_PROMPT_TEXT) => {
+    setForm({ ...emptyPrompt, english: imagePromptText });
     setEditingId(null);
-    setGroupMode("General Prompts");
+    setGroupMode("Image Prompts");
     setNewGroupTitle("");
     setImageFiles([]);
     setImageQueue([]);
@@ -445,6 +456,16 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
     setError("");
 
     try {
+      if (
+        !editingId &&
+        form.promptType === "picture_description" &&
+        imageFiles.length > 1 &&
+        form.transliteration.trim()
+      ) {
+        setError("Upload one image at a time when using an image-specific sub-prompt.");
+        return;
+      }
+
       const groupTitle = promptGroupLabel(groupMode === "__new__" ? newGroupTitle : form.moduleTitle);
       const payload = {
         ...form,
@@ -528,7 +549,11 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
         await createPrompt(payload);
       }
 
-      resetPromptForm();
+      resetPromptForm(
+        !editingId && form.promptType === "picture_description"
+          ? form.english
+          : DEFAULT_IMAGE_PROMPT_TEXT
+      );
       await onRefresh();
     } catch (err) {
       setUploadingMedia(false);
@@ -568,6 +593,15 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
       await onRefresh();
     } catch (err) {
       setError(err.message || "Unable to deactivate prompt.");
+    }
+  };
+
+  const reactivate = async (prompt) => {
+    try {
+      await updatePrompt(prompt.id, { active: true });
+      await onRefresh();
+    } catch (err) {
+      setError(err.message || "Unable to reactivate prompt.");
     }
   };
 
@@ -644,16 +678,18 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
               />
             </label>
           )}
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Task type</span>
-            <select className="select-field" value={promptTypeFilterValue(form.promptType)} onChange={(event) => updatePromptType(event.target.value)}>
-              {promptTypeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {form.promptType !== "picture_description" && (
+            <label className="space-y-1 text-xs text-neutral-400">
+              <span>Task type</span>
+              <select className="select-field" value={promptTypeFilterValue(form.promptType)} onChange={(event) => updatePromptType(event.target.value)}>
+                {promptTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="space-y-1 text-xs text-neutral-400">
             <span>Dialect</span>
             <select className="select-field" value={form.dialect} onChange={(event) => setForm({ ...form, dialect: event.target.value })}>
@@ -691,7 +727,7 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
               className="input-field min-h-24"
               name="transliteration"
               autoComplete="off"
-              placeholder="Burushaski text, transliteration, or notes volunteers may need"
+              placeholder={form.promptType === "picture_description" ? "Add an optional sub-prompt specific to this image" : "Burushaski text, transliteration, or notes volunteers may need"}
               value={form.transliteration}
               onChange={(event) => setForm({ ...form, transliteration: event.target.value })}
             />
@@ -786,7 +822,7 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
             {uploadingMedia ? "Uploading..." : editingId ? "Save Changes" : imageFiles.length > 1 ? `Add ${imageFiles.length} Prompts` : "Add Prompt"}
           </button>
           {editingId && (
-            <button type="button" className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700" onClick={resetPromptForm}>
+            <button type="button" className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700" onClick={() => resetPromptForm()}>
               Cancel
             </button>
           )}
@@ -843,7 +879,11 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
             render: (prompt) => (
               <div className="flex gap-2">
                 <button className="rounded bg-neutral-800 px-3 py-1 text-xs text-white hover:bg-neutral-700" onClick={() => edit(prompt)}>Edit</button>
-                <button className="rounded bg-red-700 px-3 py-1 text-xs text-white hover:bg-red-600" onClick={() => deactivate(prompt)}>Deactivate</button>
+                {prompt.active ? (
+                  <button className="rounded bg-red-700 px-3 py-1 text-xs text-white hover:bg-red-600" onClick={() => deactivate(prompt)}>Deactivate</button>
+                ) : (
+                  <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600" onClick={() => reactivate(prompt)}>Reactivate</button>
+                )}
               </div>
             ),
           },

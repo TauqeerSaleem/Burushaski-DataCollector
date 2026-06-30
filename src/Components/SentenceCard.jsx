@@ -1,9 +1,11 @@
 import { useRecorder } from "../hooks/useRecorder";
 import { db } from "../db/indexdb";
 import { useUser } from "../context/UserContext";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { syncPendingRecordings } from "../utils/syncRecordings";
 import FeedbackModal from "./FeedbackModal";
+
+const MAX_RECORDING_MS = 5 * 60 * 1000;
 
 export default function SentenceCard({
   sentence,
@@ -24,6 +26,10 @@ export default function SentenceCard({
   const [audioUrl, setAudioUrl] = useState(null);
   const [status, setStatus] = useState(null); // pending | synced
   const [showFeedback, setShowFeedback] = useState(false);
+  const [recordingMessage, setRecordingMessage] = useState("");
+  const recordingLimitTimerRef = useRef(null);
+  const recordingStartedAtRef = useRef(null);
+  const recordingDurationMsRef = useRef(0);
 
   const isRecorded = isCompleted;
 
@@ -46,16 +52,49 @@ export default function SentenceCard({
     load();
   }, [moduleId, sentence.sentenceId, user.participantId]);
 
+  useEffect(() => () => {
+    if (recordingLimitTimerRef.current) clearTimeout(recordingLimitTimerRef.current);
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+  }, [audioUrl]);
+
   const handleStart = async () => {
+    setRecordingMessage("");
     await startRecording();
+    recordingStartedAtRef.current = Date.now();
+    recordingLimitTimerRef.current = setTimeout(async () => {
+      recordingLimitTimerRef.current = null;
+      recordingDurationMsRef.current = MAX_RECORDING_MS;
+      const blob = await stopRecording();
+      if (blob) {
+        setAudioBlob(blob);
+        setAudioUrl(URL.createObjectURL(blob));
+        setRecordingMessage("Recording stopped at the 5-minute limit. Submit what you recorded or restart.");
+      }
+    }, MAX_RECORDING_MS);
   };
 
   const handleStop = async () => {
+    if (recordingLimitTimerRef.current) {
+      clearTimeout(recordingLimitTimerRef.current);
+      recordingLimitTimerRef.current = null;
+    }
+    recordingDurationMsRef.current = recordingStartedAtRef.current
+      ? Math.min(Date.now() - recordingStartedAtRef.current, MAX_RECORDING_MS)
+      : 0;
     const blob = await stopRecording();
     if (blob) {
       setAudioBlob(blob);
       setAudioUrl(URL.createObjectURL(blob));
     }
+  };
+
+  const restart = () => {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioBlob(null);
+    setAudioUrl(null);
+    setRecordingMessage("");
+    recordingStartedAtRef.current = null;
+    recordingDurationMsRef.current = 0;
   };
 
   // 🎙 Submit recording
@@ -69,6 +108,7 @@ export default function SentenceCard({
       sentenceId: sentence.sentenceId,
       audioBlob,
       status: "pending",
+      durationMs: recordingDurationMsRef.current,
       createdAt: new Date(),
     });
 
@@ -133,6 +173,7 @@ export default function SentenceCard({
         {/* 🎧 Playback */}
         {!isRecorded && audioUrl && (
           <div className="space-y-2">
+            {recordingMessage && <p className="text-sm text-amber-700">{recordingMessage}</p>}
             <audio controls src={audioUrl} />
             <div className="space-x-2">
               <button
@@ -140,6 +181,12 @@ export default function SentenceCard({
                 className="px-3 py-1 bg-green-600 text-white rounded"
               >
                 Submit
+              </button>
+              <button
+                onClick={restart}
+                className="px-3 py-1 bg-gray-200 text-gray-800 rounded"
+              >
+                Restart
               </button>
             </div>
           </div>

@@ -1,14 +1,17 @@
 // src/hooks/useRecorder.js
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 
 export function useRecorder() {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const stopPromiseRef = useRef(null);
   const chunksRef = useRef([]);
   const mimeTypeRef = useRef(null); // 👈 store selected format
 
   const startRecording = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    streamRef.current = stream;
 
     // ✅ iOS-first format selection
     let mimeType = "";
@@ -40,25 +43,68 @@ export function useRecorder() {
   };
 
   const stopRecording = () => {
-    return new Promise((resolve) => {
-      const mediaRecorder = mediaRecorderRef.current;
+    if (stopPromiseRef.current) return stopPromiseRef.current;
+
+    const mediaRecorder = mediaRecorderRef.current;
+
+    if (!mediaRecorder || mediaRecorder.state === "inactive") {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setIsRecording(false);
+      return Promise.resolve(
+        new Blob(chunksRef.current, { type: mimeTypeRef.current || "audio/webm" })
+      );
+    }
+
+    stopPromiseRef.current = new Promise((resolve, reject) => {
 
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunksRef.current, {
           type: mimeTypeRef.current || "audio/webm",
         });
 
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
         setIsRecording(false);
+        stopPromiseRef.current = null;
         resolve(blob);
       };
 
-      mediaRecorder.stop();
+      mediaRecorder.onerror = (event) => {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        setIsRecording(false);
+        stopPromiseRef.current = null;
+        reject(event.error || new Error("Recording failed."));
+      };
+
+      try {
+        mediaRecorder.stop();
+      } catch (error) {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        setIsRecording(false);
+        stopPromiseRef.current = null;
+        reject(error);
+      }
     });
+
+    return stopPromiseRef.current;
   };
 
   const resetRecording = () => {
     chunksRef.current = [];
   };
+
+  useEffect(() => () => {
+    const mediaRecorder = mediaRecorderRef.current;
+    if (mediaRecorder?.state === "recording") {
+      mediaRecorder.onstop = null;
+      mediaRecorder.stop();
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }, []);
 
   return {
     isRecording,
