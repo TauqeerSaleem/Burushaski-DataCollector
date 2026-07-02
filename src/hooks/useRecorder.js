@@ -28,7 +28,12 @@ export function useRecorder() {
 
     mimeTypeRef.current = mimeType;
 
-    const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    const mediaRecorder = new MediaRecorder(stream, {
+      ...(mimeType ? { mimeType } : {}),
+      // Speech does not need the browser's often very high default bitrate.
+      // This also keeps five-minute recordings practical on mobile networks.
+      audioBitsPerSecond: 48000,
+    });
     mediaRecorderRef.current = mediaRecorder;
     chunksRef.current = [];
 
@@ -38,7 +43,8 @@ export function useRecorder() {
       }
     };
 
-    mediaRecorder.start();
+    // Periodic chunks are more reliable than one long in-memory chunk on mobile.
+    mediaRecorder.start(1000);
     setIsRecording(true);
   };
 

@@ -161,6 +161,8 @@ create table if not exists public.research_tasks (
   task_type text not null default 'transcription'
     check (task_type in ('transcription', 'translation', 'validation', 'metadata_review')),
   assigned_to uuid references public.app_users(id) on delete set null,
+  recording_id bigint references public.recordings(id) on delete set null,
+  requested_outputs text[] not null default '{}',
   source_type text not null default 'audio'
     check (source_type in ('audio', 'text', 'content_url', 'recording', 'feedback')),
   source_ref text,
@@ -173,7 +175,13 @@ create table if not exists public.research_tasks (
   due_date date,
   transcript text,
   translation text,
+  researcher_notes text,
+  admin_feedback text,
   notes text,
+  submitted_at timestamptz,
+  completed_at timestamptz,
+  applied_to_recording_at timestamptz,
+  applied_by text,
   created_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -229,6 +237,30 @@ add column if not exists validation_score integer not null default 0;
 alter table public.recordings
 add column if not exists validation_weight integer not null default 1;
 
+alter table public.research_tasks
+add column if not exists recording_id bigint references public.recordings(id) on delete set null;
+
+alter table public.research_tasks
+add column if not exists requested_outputs text[] not null default '{}';
+
+alter table public.research_tasks
+add column if not exists researcher_notes text;
+
+alter table public.research_tasks
+add column if not exists admin_feedback text;
+
+alter table public.research_tasks
+add column if not exists submitted_at timestamptz;
+
+alter table public.research_tasks
+add column if not exists completed_at timestamptz;
+
+alter table public.research_tasks
+add column if not exists applied_to_recording_at timestamptz;
+
+alter table public.research_tasks
+add column if not exists applied_by text;
+
 do $$
 begin
   alter table public.prompt_bank drop constraint if exists prompt_bank_prompt_type_check;
@@ -278,6 +310,10 @@ create index if not exists prompt_correction_reviews_created_idx
 on public.prompt_correction_reviews (created_at);
 create index if not exists research_tasks_status_idx on public.research_tasks (status);
 create index if not exists research_tasks_assigned_idx on public.research_tasks (assigned_to);
+create index if not exists research_tasks_recording_idx on public.research_tasks (recording_id);
+create unique index if not exists research_tasks_one_open_assignee_recording_uidx
+on public.research_tasks (recording_id, assigned_to)
+where recording_id is not null and assigned_to is not null and status <> 'done';
 create index if not exists contributions_username_created_idx
 on public.contributions (username, created_at desc);
 
@@ -314,6 +350,58 @@ begin
   return new;
 end;
 $$;
+
+create or replace function public.apply_research_task_result(
+  task_id uuid,
+  admin_username text
+)
+returns setof public.research_tasks
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  task_row public.research_tasks%rowtype;
+begin
+  select * into task_row
+  from public.research_tasks
+  where id = task_id
+  for update;
+
+  if not found then raise exception 'Research task not found.'; end if;
+  if task_row.recording_id is null then raise exception 'Research task is not linked to a recording.'; end if;
+  if 'transcript' = any(task_row.requested_outputs) and nullif(trim(task_row.transcript), '') is null then
+    raise exception 'A transcript is required before applying this task.';
+  end if;
+  if 'translation' = any(task_row.requested_outputs) and nullif(trim(task_row.translation), '') is null then
+    raise exception 'A translation is required before applying this task.';
+  end if;
+  if not ('transcript' = any(task_row.requested_outputs)) and not ('translation' = any(task_row.requested_outputs)) then
+    raise exception 'This assignment has no transcript or translation to apply.';
+  end if;
+
+  update public.recordings
+  set
+    transcript = case when 'transcript' = any(task_row.requested_outputs) then task_row.transcript else transcript end,
+    english_translation = case when 'translation' = any(task_row.requested_outputs) then task_row.translation else english_translation end
+  where id = task_row.recording_id;
+
+  if not found then raise exception 'Linked recording not found.'; end if;
+
+  return query
+  update public.research_tasks
+  set status = 'done',
+      completed_at = now(),
+      applied_to_recording_at = now(),
+      applied_by = admin_username,
+      updated_at = now()
+  where id = task_row.id
+  returning *;
+end;
+$$;
+
+revoke all on function public.apply_research_task_result(uuid, text) from public, anon, authenticated;
+grant execute on function public.apply_research_task_result(uuid, text) to service_role;
 
 do $$
 begin

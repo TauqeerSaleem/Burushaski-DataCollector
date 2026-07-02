@@ -10,7 +10,7 @@ const API_BASE_URL =
   (import.meta.env.DEV ? "http://localhost:3001" : "");
 const MAX_RECORDING_MS = 5 * 60 * 1000;
 
-export default function Dashboard() {
+export default function Dashboard({ headerAction = null }) {
   const { user, setUser } = useUser();
   const navigate = useNavigate();
   const { isRecording, startRecording, stopRecording, resetRecording } = useRecorder();
@@ -292,6 +292,7 @@ const recordedForDialect = allSentences
           Recording
         </h1>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {headerAction}
           <button
             type="button"
             onClick={() => navigate("/stats")}

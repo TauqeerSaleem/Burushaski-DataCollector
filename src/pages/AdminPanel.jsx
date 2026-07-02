@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import {
   clearAdminSession,
+  applyResearchTask,
   approvePromptCorrection,
   createAdminAccount,
   createPrompt,
@@ -95,6 +96,8 @@ const emptyTask = {
   title: "",
   taskType: "transcription",
   assignedTo: "",
+  recordingId: null,
+  requestedOutputs: [],
   sourceType: "audio",
   sourceRef: "",
   sourceText: "",
@@ -104,6 +107,8 @@ const emptyTask = {
   dueDate: "",
   transcript: "",
   translation: "",
+  researcherNotes: "",
+  adminFeedback: "",
   notes: "",
 };
 
@@ -897,10 +902,11 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
   );
 }
 
-function ResearchTasksTab({ tasks, users, onRefresh }) {
-  const researchers = users.filter((user) => user.role === USER_ROLES.RESEARCHER || user.role === USER_ROLES.ADMIN);
+function ResearchTasksTab({ tasks, users, onRefresh, onOpenRecords, onApply, onComplete }) {
+  const researchers = users.filter((user) => user.role === USER_ROLES.RESEARCHER && user.active !== false);
   const [form, setForm] = useState(emptyTask);
   const [editingId, setEditingId] = useState(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [filters, setFilters] = useState({ search: "", assignedTo: "all", status: "all", type: "all" });
   const [error, setError] = useState("");
 
@@ -931,6 +937,7 @@ function ResearchTasksTab({ tasks, users, onRefresh }) {
 
       setForm(emptyTask);
       setEditingId(null);
+      setShowAdvanced(false);
       await onRefresh();
     } catch (err) {
       setError(err.message || "Unable to save research task.");
@@ -940,10 +947,18 @@ function ResearchTasksTab({ tasks, users, onRefresh }) {
   const edit = (task) => {
     setEditingId(task.id);
     setForm({ ...emptyTask, ...task });
+    setShowAdvanced(true);
     setError("");
   };
 
   const assigneeName = (id) => users.find((user) => user.id === id)?.username || "-";
+  const statusLabel = (status) => ({
+    todo: "To do",
+    in_progress: "In progress",
+    review: "Awaiting review",
+    done: "Completed",
+    blocked: "Needs changes",
+  }[status] || status);
 
   return (
     <div className="space-y-6">
@@ -955,7 +970,47 @@ function ResearchTasksTab({ tasks, users, onRefresh }) {
 
       {error && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{error}</p>}
 
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Stat label="Unassigned" value={tasks.filter((task) => !task.assignedTo).length} />
+        <Stat label="To do" value={tasks.filter((task) => task.status === "todo").length} />
+        <Stat label="In progress" value={tasks.filter((task) => task.status === "in_progress").length} />
+        <Stat label="Awaiting review" value={tasks.filter((task) => task.status === "review").length} />
+        <Stat label="Completed" value={tasks.filter((task) => task.status === "done").length} />
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" onClick={onOpenRecords}>
+          Assign a recording
+        </button>
+        <button
+          type="button"
+          className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700"
+          onClick={() => {
+            setShowAdvanced((current) => !current);
+            setEditingId(null);
+            setForm(emptyTask);
+          }}
+        >
+          {showAdvanced ? "Hide manual task form" : "Create non-recording task"}
+        </button>
+      </div>
+
+      {showAdvanced && (
       <form autoComplete="off" onSubmit={save} className="rounded-lg border border-neutral-800 bg-neutral-900/80 p-4 space-y-4">
+        {form.recording && (
+          <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+            <div>
+              <p className="text-sm font-medium text-white">
+                {form.recording.username || form.recording.participantId}
+              </p>
+              <p className="text-xs text-neutral-500">
+                {form.recording.moduleTitle} · Recording #{form.recording.id}
+              </p>
+            </div>
+            <p className="text-sm text-neutral-300">{form.recording.promptText || "Prompt text unavailable"}</p>
+            {form.recording.audioUrl && <audio className="w-full" controls src={form.recording.audioUrl} />}
+          </div>
+        )}
         <div className="grid gap-3 md:grid-cols-4">
           <label className="space-y-1 text-xs text-neutral-400">
             <span>Task title</span>
@@ -1044,6 +1099,12 @@ function ResearchTasksTab({ tasks, users, onRefresh }) {
           <span>Internal notes</span>
           <textarea className="input-field min-h-20" name="notes" autoComplete="off" placeholder="Admin-only notes" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
         </label>
+        {editingId && (
+          <label className="block space-y-1 text-xs text-neutral-400">
+            <span>Feedback visible to researcher</span>
+            <textarea className="input-field min-h-20" value={form.adminFeedback} onChange={(event) => setForm({ ...form, adminFeedback: event.target.value })} placeholder="Explain requested changes or review outcome" />
+          </label>
+        )}
 
         <div className="flex flex-wrap gap-2">
           <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" disabled={!form.title}>
@@ -1056,6 +1117,7 @@ function ResearchTasksTab({ tasks, users, onRefresh }) {
           )}
         </div>
       </form>
+      )}
 
       <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-5">
         <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
@@ -1078,9 +1140,9 @@ function ResearchTasksTab({ tasks, users, onRefresh }) {
             <option value="all">All statuses</option>
             <option value="todo">To do</option>
             <option value="in_progress">In progress</option>
-            <option value="review">Review</option>
+            <option value="review">Awaiting review</option>
             <option value="done">Done</option>
-            <option value="blocked">Blocked</option>
+            <option value="blocked">Needs changes</option>
           </select>
         </label>
         <label className="space-y-1 text-xs text-neutral-400">
@@ -1097,13 +1159,38 @@ function ResearchTasksTab({ tasks, users, onRefresh }) {
 
       <Table
         columns={[
-          { key: "title", label: "Task" },
-          { key: "taskType", label: "Type" },
+          { key: "title", label: "Assignment", render: (task) => (
+            <div>
+              <p className="font-medium text-white">{task.title}</p>
+              {task.recording && (
+                <p className="text-xs text-neutral-500">
+                  {task.recording.username || task.recording.participantId} · {task.recording.moduleTitle}
+                </p>
+              )}
+            </div>
+          ) },
+          { key: "taskType", label: "Outputs", render: (task) => task.requestedOutputs?.length ? task.requestedOutputs.join(", ") : task.taskType },
           { key: "assignedTo", label: "Assigned", render: (task) => assigneeName(task.assignedTo) },
-          { key: "status", label: "Status", render: (task) => <Badge tone={task.status === "done" ? "green" : task.status === "blocked" ? "red" : "yellow"}>{task.status}</Badge> },
+          { key: "status", label: "Status", render: (task) => <Badge tone={task.status === "done" ? "green" : task.status === "blocked" ? "red" : "yellow"}>{statusLabel(task.status)}</Badge> },
           { key: "priority", label: "Priority", render: (task) => <Badge tone={task.priority === "urgent" || task.priority === "high" ? "red" : "neutral"}>{task.priority}</Badge> },
           { key: "dueDate", label: "Due" },
-          { key: "actions", label: "Actions", render: (task) => <button className="rounded bg-neutral-800 px-3 py-1 text-xs text-white hover:bg-neutral-700" onClick={() => edit(task)}>Edit</button> },
+          { key: "actions", label: "Actions", render: (task) => (
+            <div className="flex flex-wrap gap-2">
+              <button className="rounded bg-neutral-800 px-3 py-1 text-xs text-white hover:bg-neutral-700" onClick={() => edit(task)}>
+                {task.status === "review" ? "Review" : "Edit"}
+              </button>
+              {task.status === "review" && task.recordingId && task.requestedOutputs?.some((output) => output === "transcript" || output === "translation") && (
+                <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600" onClick={() => onApply(task)}>
+                  Apply to recording
+                </button>
+              )}
+              {task.status === "review" && (
+                <button className="rounded bg-blue-700 px-3 py-1 text-xs text-white hover:bg-blue-600" onClick={() => onComplete(task)}>
+                  Approve without applying
+                </button>
+              )}
+            </div>
+          ) },
         ]}
         rows={filteredTasks}
         emptyText="No assignments match these filters."
@@ -1396,6 +1483,153 @@ function ContentCreatorTab({ users, recordsPage }) {
   );
 }
 
+function RecordingAssignmentModal({ recording, users, onClose, onCreated }) {
+  const researchers = users.filter(
+    (user) => user.role === USER_ROLES.RESEARCHER && user.active !== false
+  );
+  const [assignedTo, setAssignedTo] = useState("");
+  const [requestedOutputs, setRequestedOutputs] = useState(["transcript", "translation"]);
+  const [instructions, setInstructions] = useState("");
+  const [priority, setPriority] = useState("normal");
+  const [dueDate, setDueDate] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!recording) return null;
+
+  const toggleOutput = (value) => {
+    setRequestedOutputs((current) =>
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value]
+    );
+  };
+
+  const save = async (event) => {
+    event.preventDefault();
+    if (!assignedTo || !requestedOutputs.length || saving) return;
+
+    setSaving(true);
+    setError("");
+
+    try {
+      const outputLabel = requestedOutputs
+        .map((value) => value === "metadata_review" ? "metadata review" : value)
+        .join(" and ");
+      await createResearchTask({
+        ...emptyTask,
+        title: `${outputLabel.charAt(0).toUpperCase()}${outputLabel.slice(1)} · ${recording.username || recording.participantId}`,
+        taskType: requestedOutputs.includes("transcript") ? "transcription" : requestedOutputs.includes("translation") ? "translation" : requestedOutputs[0],
+        assignedTo,
+        recordingId: recording.id,
+        requestedOutputs,
+        sourceType: "recording",
+        sourceRef: String(recording.id),
+        instructions,
+        priority,
+        dueDate,
+        status: "todo",
+      });
+      await onCreated?.();
+      onClose();
+    } catch (err) {
+      setError(err.message || "Unable to assign recording.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <form onSubmit={save} className="max-h-[90vh] w-full max-w-2xl space-y-4 overflow-auto rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-yellow-400">Assign recording</p>
+            <h3 className="mt-1 text-xl font-semibold text-white">
+              {recording.username || recording.participantId}
+            </h3>
+            <p className="mt-1 text-sm text-neutral-400">
+              {dialectLabel(recording.dialect)} · {promptGroupLabel(recording.moduleTitle || recording.moduleId)}
+            </p>
+          </div>
+          <button type="button" className="rounded bg-neutral-800 px-3 py-2 text-sm text-white" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+          <p className="text-sm text-neutral-300">{recording.promptEnglish || "Prompt text unavailable"}</p>
+          {recording.audioUrl ? (
+            <audio className="mt-3 w-full" controls src={recording.audioUrl} />
+          ) : (
+            <p className="mt-2 text-xs text-neutral-500">Audio preview is unavailable.</p>
+          )}
+        </div>
+
+        <label className="block space-y-1 text-sm text-neutral-300">
+          <span>Researcher</span>
+          <select className="select-field" required value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}>
+            <option value="">Select an active researcher</option>
+            {researchers.map((user) => (
+              <option key={user.id} value={user.id}>{user.username}</option>
+            ))}
+          </select>
+        </label>
+
+        <fieldset className="space-y-2">
+          <legend className="text-sm text-neutral-300">Work required</legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {[
+              ["transcript", "Burushaski transcript"],
+              ["translation", "English translation"],
+              ["metadata_review", "Metadata review"],
+              ["validation", "Quality validation"],
+            ].map(([value, label]) => (
+              <label key={value} className="flex items-center gap-2 rounded border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-200">
+                <input type="checkbox" checked={requestedOutputs.includes(value)} onChange={() => toggleOutput(value)} />
+                {label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <label className="block space-y-1 text-sm text-neutral-300">
+          <span>Instructions for researcher</span>
+          <textarea className="input-field min-h-24" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Optional context, formatting requirements, speaker labels, or quality notes" />
+        </label>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="space-y-1 text-sm text-neutral-300">
+            <span>Priority</span>
+            <select className="select-field" value={priority} onChange={(event) => setPriority(event.target.value)}>
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-sm text-neutral-300">
+            <span>Due date</span>
+            <input className="input-field" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+          </label>
+        </div>
+
+        {researchers.length === 0 && (
+          <p className="rounded bg-amber-950 px-3 py-2 text-sm text-amber-200">No active researcher accounts are available.</p>
+        )}
+        {error && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <button type="button" className="rounded bg-neutral-800 px-4 py-2 text-sm text-white" onClick={onClose}>Cancel</button>
+          <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black disabled:opacity-40" disabled={saving || !assignedTo || !requestedOutputs.length || !researchers.length}>
+            {saving ? "Assigning..." : "Assign recording"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function DataTab({
   recordsPage,
   correctionsData,
@@ -1406,12 +1640,15 @@ function DataTab({
   onRecordsPage,
   onCorrectionsLoad,
   onApproveCorrection,
+  onAssignmentCreated,
+  researchTasks,
 }) {
   const [activeView, setActiveView] = useState("records");
   const [filters, setFilters] = useState({ search: "", moduleId: "all", participantId: "all", dialect: "all", role: "all" });
   const [correctionFilters, setCorrectionFilters] = useState({ search: "", participantId: "all", moduleId: "all", promptId: "all" });
   const [recordSort, setRecordSort] = useState({ key: "createdAt", direction: "desc" });
   const [correctionSort, setCorrectionSort] = useState({ key: "count", direction: "desc" });
+  const [assignmentRecording, setAssignmentRecording] = useState(null);
   const recordings = useMemo(() => recordsPage.rows || [], [recordsPage.rows]);
   const corrections = useMemo(() => correctionsData.corrections || [], [correctionsData.corrections]);
   const correctionGroups = useMemo(() => correctionsData.groups || [], [correctionsData.groups]);
@@ -1619,6 +1856,29 @@ function DataTab({
                   ),
               },
               { key: "createdAt", label: "Created", sortable: true },
+              {
+                key: "assignments",
+                label: "Research",
+                render: (recording) => {
+                  const linked = (researchTasks || []).filter((task) => task.recordingId === recording.id);
+                  return linked.length
+                    ? <Badge tone={linked.some((task) => task.status === "review") ? "yellow" : linked.every((task) => task.status === "done") ? "green" : "blue"}>{linked.length} assigned</Badge>
+                    : <span className="text-xs text-neutral-500">Unassigned</span>;
+                },
+              },
+              {
+                key: "actions",
+                label: "Actions",
+                render: (recording) => (
+                  <button
+                    type="button"
+                    className="rounded bg-yellow-400 px-3 py-1.5 text-xs font-semibold text-black hover:bg-yellow-300"
+                    onClick={() => setAssignmentRecording(recording)}
+                  >
+                    Assign to researcher
+                  </button>
+                ),
+              },
             ]}
             rows={sortedRecordings}
             emptyText="No recordings yet."
@@ -1774,6 +2034,12 @@ function DataTab({
           />
         </div>
       )}
+      <RecordingAssignmentModal
+        recording={assignmentRecording}
+        users={users}
+        onClose={() => setAssignmentRecording(null)}
+        onCreated={onAssignmentCreated}
+      />
     </div>
   );
 }
@@ -2025,9 +2291,42 @@ export default function AdminPanel() {
     }
   }, [loadCorrections]);
 
+  const applyAssignment = useCallback(async (task) => {
+    if (!window.confirm("Apply this researcher submission to the canonical recording and mark the assignment completed?")) return;
+
+    try {
+      await applyResearchTask(task.id);
+      await load();
+    } catch (err) {
+      setError(err.message || "Unable to apply researcher work to the recording.");
+    }
+  }, [load]);
+
+  const completeAssignment = useCallback(async (task) => {
+    if (!window.confirm("Approve this assignment without copying its work into the canonical recording?")) return;
+
+    try {
+      await updateResearchTask(task.id, { status: "done" });
+      await load();
+    } catch (err) {
+      setError(err.message || "Unable to complete researcher assignment.");
+    }
+  }, [load]);
+
   const currentView = useMemo(() => {
     if (activeTab === "prompts") return <PromptsTab prompts={prompts} onRefresh={load} onAuthError={handleAuthError} />;
-    if (activeTab === "research") return <ResearchTasksTab tasks={researchTasks} users={users} onRefresh={load} />;
+    if (activeTab === "research") {
+      return (
+        <ResearchTasksTab
+          tasks={researchTasks}
+          users={users}
+          onRefresh={load}
+          onOpenRecords={() => setActiveTab("data")}
+          onApply={applyAssignment}
+          onComplete={completeAssignment}
+        />
+      );
+    }
     if (activeTab === "cc") return <ContentCreatorTab users={users} recordsPage={recordsPage} />;
     if (activeTab === "users") return <UsersTab users={users} onRefresh={load} />;
     if (activeTab === "data") {
@@ -2043,12 +2342,14 @@ export default function AdminPanel() {
           onRecordsPage={loadRecordsPage}
           onCorrectionsLoad={loadCorrections}
           onApproveCorrection={approveCorrection}
+          onAssignmentCreated={load}
+          researchTasks={researchTasks}
         />
       );
     }
     if (activeTab === "admins") return <AdminsTab admins={admins} currentAdmin={admin} onRefresh={load} />;
     return <OverviewTab overview={overview} prompts={prompts} />;
-  }, [activeTab, admin, overview, users, data, recordsPage, correctionsData, prompts, researchTasks, admins, recordsLoading, correctionsLoading, load, loadRecordsPage, loadCorrections, approveCorrection, handleAuthError]);
+  }, [activeTab, admin, overview, users, data, recordsPage, correctionsData, prompts, researchTasks, admins, recordsLoading, correctionsLoading, load, loadRecordsPage, loadCorrections, approveCorrection, applyAssignment, completeAssignment, handleAuthError]);
 
   if (!token) return <Navigate to="/admin/login" replace />;
 

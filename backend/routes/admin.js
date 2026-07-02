@@ -62,6 +62,11 @@ function cleanText(value) {
   return text.length > 0 ? text : null;
 }
 
+function cleanStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map((item) => cleanText(item)).filter(Boolean)));
+}
+
 function cleanOptionalText(value) {
   if (value === undefined || value === null) return null;
   return String(value).trim();
@@ -488,6 +493,8 @@ function taskToClient(row) {
     title: row.title || "",
     taskType: row.task_type || "transcription",
     assignedTo: row.assigned_to || "",
+    recordingId: row.recording_id || null,
+    requestedOutputs: Array.isArray(row.requested_outputs) ? row.requested_outputs : [],
     sourceType: row.source_type || "audio",
     sourceRef: row.source_ref || "",
     sourceText: row.source_text || "",
@@ -497,7 +504,14 @@ function taskToClient(row) {
     dueDate: row.due_date || "",
     transcript: row.transcript || "",
     translation: row.translation || "",
+    researcherNotes: row.researcher_notes || "",
+    adminFeedback: row.admin_feedback || "",
     notes: row.notes || "",
+    submittedAt: row.submitted_at || "",
+    completedAt: row.completed_at || "",
+    appliedToRecordingAt: row.applied_to_recording_at || "",
+    appliedBy: row.applied_by || "",
+    recording: row.recording || null,
     createdBy: row.created_by || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -509,6 +523,12 @@ function taskPayload(body, admin) {
     ...(body.title !== undefined ? { title: cleanText(body.title) } : {}),
     ...(body.taskType !== undefined ? { task_type: cleanText(body.taskType) || "transcription" } : {}),
     ...(body.assignedTo !== undefined ? { assigned_to: cleanText(body.assignedTo) } : {}),
+    ...(body.recordingId !== undefined
+      ? { recording_id: cleanText(body.recordingId) ? cleanInteger(body.recordingId, null, 1) : null }
+      : {}),
+    ...(body.requestedOutputs !== undefined
+      ? { requested_outputs: cleanStringArray(body.requestedOutputs).filter((value) => ["transcript", "translation", "metadata_review", "validation"].includes(value)) }
+      : {}),
     ...(body.sourceType !== undefined ? { source_type: cleanText(body.sourceType) || "audio" } : {}),
     ...(body.sourceRef !== undefined ? { source_ref: cleanText(body.sourceRef) } : {}),
     ...(body.sourceText !== undefined ? { source_text: cleanText(body.sourceText) } : {}),
@@ -518,10 +538,135 @@ function taskPayload(body, admin) {
     ...(body.dueDate !== undefined ? { due_date: cleanText(body.dueDate) } : {}),
     ...(body.transcript !== undefined ? { transcript: cleanText(body.transcript) } : {}),
     ...(body.translation !== undefined ? { translation: cleanText(body.translation) } : {}),
+    ...(body.researcherNotes !== undefined ? { researcher_notes: cleanText(body.researcherNotes) } : {}),
+    ...(body.adminFeedback !== undefined ? { admin_feedback: cleanText(body.adminFeedback) } : {}),
     ...(body.notes !== undefined ? { notes: cleanText(body.notes) } : {}),
     ...(admin ? { created_by: admin.username } : {}),
     updated_at: new Date().toISOString(),
   };
+}
+
+function storageSegment(value) {
+  return String(value || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100) || "unknown";
+}
+
+async function requireActiveResearcherByParticipantId(participantId, res) {
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("id, participant_id, username, role, active")
+    .eq("participant_id", participantId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data || data.active === false || normalizeUserRole(data.role) !== USER_ROLES.RESEARCHER) {
+    res.status(403).json({ error: "Active researcher account required." });
+    return null;
+  }
+
+  return data;
+}
+
+async function validateResearchTaskLinks(payload, existingTask = null) {
+  const assignedTo = payload.assigned_to !== undefined ? payload.assigned_to : existingTask?.assigned_to;
+  const recordingId = payload.recording_id !== undefined ? payload.recording_id : existingTask?.recording_id;
+
+  if (assignedTo) {
+    const { data: researcher, error } = await supabase
+      .from("app_users")
+      .select("id, role, active")
+      .eq("id", assignedTo)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!researcher || researcher.active === false || normalizeUserRole(researcher.role) !== USER_ROLES.RESEARCHER) {
+      return "Assignments require an active researcher.";
+    }
+  }
+
+  if (recordingId) {
+    const { data: recording, error } = await supabase
+      .from("recordings")
+      .select("id")
+      .eq("id", recordingId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!recording) return "The selected recording no longer exists.";
+    if (!assignedTo) return "Recording assignments require a researcher.";
+  }
+
+  return null;
+}
+
+async function enrichResearchTasks(rows) {
+  const recordingIds = Array.from(new Set((rows || []).map((row) => row.recording_id).filter(Boolean)));
+  if (!recordingIds.length) return (rows || []).map(taskToClient);
+
+  const { data: recordings, error } = await supabase
+    .from("recordings")
+    .select("id, participant_id, dialect, module_id, sentence_id, audio_path, created_at")
+    .in("id", recordingIds);
+
+  if (error) throw error;
+
+  const promptIds = Array.from(new Set((recordings || []).map((recording) => recording.sentence_id).filter(Boolean)));
+  const participantIds = Array.from(new Set((recordings || []).map((recording) => recording.participant_id).filter(Boolean)));
+
+  const [promptsResult, usersResult] = await Promise.all([
+    promptIds.length
+      ? supabase.from("prompt_bank").select("prompt_id, module_id, module_title, english, prompt_type").in("prompt_id", promptIds)
+      : Promise.resolve({ data: [], error: null }),
+    participantIds.length
+      ? supabase.from("app_users").select("participant_id, username").in("participant_id", participantIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (promptsResult.error) throw promptsResult.error;
+  if (usersResult.error) throw usersResult.error;
+
+  const promptMap = new Map(
+    (promptsResult.data || []).map((prompt) => [`${prompt.module_id}:${prompt.prompt_id}`, prompt])
+  );
+  const userMap = new Map((usersResult.data || []).map((user) => [user.participant_id, user]));
+  const recordingMap = new Map();
+
+  await Promise.all((recordings || []).map(async (recording) => {
+    const prompt = promptMap.get(`${recording.module_id}:${recording.sentence_id}`) || {};
+    const participant = userMap.get(recording.participant_id) || {};
+    const { data: signedAudio } = await supabase.storage
+      .from("audio-recordings")
+      .createSignedUrl(recording.audio_path, 60 * 60);
+
+    recordingMap.set(recording.id, {
+      id: recording.id,
+      participantId: recording.participant_id,
+      username: participant.username || "",
+      dialect: recording.dialect || "",
+      moduleId: recording.module_id,
+      moduleTitle: prompt.module_title || recording.module_id,
+      promptId: recording.sentence_id,
+      promptText: prompt.english || "",
+      promptType: prompt.prompt_type || "",
+      audioPath: recording.audio_path,
+      audioUrl: signedAudio?.signedUrl || "",
+      createdAt: recording.created_at,
+    });
+  }));
+
+  return (rows || []).map((row) => taskToClient({
+    ...row,
+    recording: row.recording_id ? recordingMap.get(row.recording_id) || null : null,
+  }));
+}
+
+function researcherTaskToClient(task) {
+  const {
+    notes: _adminNotes,
+    createdBy: _createdBy,
+    appliedBy: _appliedBy,
+    ...safeTask
+  } = task;
+  return safeTask;
 }
 
 function promptsToModules(rows) {
@@ -669,6 +814,210 @@ router.get("/volunteer-dashboard", async (req, res) => {
   } catch (error) {
     console.error("Volunteer dashboard load failed:", error.message);
     res.status(500).json({ error: "Unable to load volunteer dashboard." });
+  }
+});
+
+async function validateRecordingRequest(body, res) {
+  const participantId = cleanText(body.participantId);
+  const moduleId = cleanText(body.moduleId);
+  const sentenceId = cleanText(body.sentenceId);
+  const contentType = cleanMimeType(body.contentType, "audio/webm");
+  const recordingDurationMs = cleanInteger(body.durationMs, 0, 0);
+  const fileSize = cleanInteger(body.fileSize, 0, 0);
+
+  if (!participantId || !moduleId || !sentenceId) {
+    res.status(400).json({ error: "Participant, module, and prompt IDs are required." });
+    return null;
+  }
+  if (!ALLOWED_RECORDING_TYPES.has(contentType)) {
+    res.status(415).json({ error: "Unsupported recording format." });
+    return null;
+  }
+  if (recordingDurationMs > MAX_RECORDING_MS + 1000) {
+    res.status(413).json({ error: "Recordings must be 5 minutes or shorter." });
+    return null;
+  }
+  if (fileSize < 1 || fileSize > MAX_RECORDING_BYTES) {
+    res.status(413).json({ error: "The recording file is empty or too large." });
+    return null;
+  }
+
+  const participant = await requireActiveParticipant(participantId, res);
+  if (!participant) return null;
+
+  const { data: prompt, error: promptError } = await supabase
+    .from("prompt_bank")
+    .select("active, dialect")
+    .eq("module_id", moduleId)
+    .eq("prompt_id", sentenceId)
+    .maybeSingle();
+
+  if (promptError) throw promptError;
+  if (!prompt || prompt.active === false) {
+    res.status(409).json({ error: "This prompt is no longer active. Load another prompt and try again." });
+    return null;
+  }
+
+  const participantDialect = cleanDialect(participant.dialect);
+  const promptDialect = cleanDialect(prompt.dialect);
+  if (promptDialect && promptDialect !== "all" && promptDialect !== participantDialect) {
+    res.status(403).json({ error: "This prompt is not assigned to the participant's dialect." });
+    return null;
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("recordings")
+    .select("*")
+    .eq("participant_id", participantId)
+    .eq("module_id", moduleId)
+    .eq("sentence_id", sentenceId)
+    .maybeSingle();
+
+  if (existingError) throw existingError;
+
+  const dialect = participantDialect || "unknown";
+  const extension = recordingExtension(contentType);
+  const path = [
+    storageSegment(dialect),
+    storageSegment(participantId),
+    storageSegment(moduleId),
+    `${storageSegment(sentenceId)}.${extension}`,
+  ].join("/");
+
+  return {
+    participant,
+    existing,
+    participantId,
+    moduleId,
+    sentenceId,
+    dialect,
+    contentType,
+    fileSize,
+    path,
+  };
+}
+
+router.post("/recordings/upload-intent", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+    const validated = await validateRecordingRequest(req.body || {}, res);
+    if (!validated) return;
+    if (validated.existing) {
+      return res.status(409).json({ error: "This prompt has already been recorded by this volunteer." });
+    }
+
+    const { data, error } = await supabase.storage
+      .from("audio-recordings")
+      .createSignedUploadUrl(validated.path, { upsert: true });
+
+    if (error) throw error;
+    res.json({
+      path: validated.path,
+      token: data.token,
+      contentType: validated.contentType,
+    });
+  } catch (error) {
+    console.error("Recording upload intent failed:", error.message);
+    res.status(500).json({ error: "Unable to prepare recording upload. Please try again." });
+  }
+});
+
+router.post("/recordings/complete", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+    const validated = await validateRecordingRequest(req.body || {}, res);
+    if (!validated) return;
+
+    // Completion is intentionally idempotent so a mobile client can retry after
+    // losing the response without creating a duplicate row.
+    if (validated.existing) {
+      if (validated.existing.audio_path === validated.path) {
+        return res.json({ recording: recordingToClient(validated.existing) });
+      }
+      return res.status(409).json({ error: "This prompt has already been recorded by this volunteer." });
+    }
+
+    if (cleanText(req.body.path) !== validated.path) {
+      return res.status(400).json({ error: "Invalid recording storage path." });
+    }
+
+    const pathParts = validated.path.split("/");
+    const fileName = pathParts.pop();
+    const { data: storedFiles, error: listError } = await supabase.storage
+      .from("audio-recordings")
+      .list(pathParts.join("/"), { search: fileName, limit: 2 });
+
+    if (listError) throw listError;
+    const storedFile = (storedFiles || []).find((file) => file.name === fileName);
+    if (!storedFile) {
+      return res.status(409).json({ error: "The audio file did not finish uploading. Please try again." });
+    }
+    const storedSize = Number(storedFile.metadata?.size || 0);
+    const storedContentType = cleanMimeType(storedFile.metadata?.mimetype);
+    if (
+      storedSize < 1 ||
+      storedSize > MAX_RECORDING_BYTES ||
+      storedSize !== validated.fileSize ||
+      (storedContentType && storedContentType !== validated.contentType)
+    ) {
+      await supabase.storage.from("audio-recordings").remove([validated.path]);
+      return res.status(400).json({ error: "The uploaded audio file is incomplete or invalid. Please record it again." });
+    }
+
+    const transcript = cleanOptionalText(req.body.transcript);
+    const englishTranslation = cleanOptionalText(req.body.englishTranslation);
+    const suggestedCorrection = cleanOptionalText(req.body.suggestedCorrection);
+    const correctionFlag = Boolean(req.body.correctionFlag);
+    const { data, error: dbError } = await supabase
+      .from("recordings")
+      .insert({
+        participant_id: validated.participantId,
+        dialect: validated.dialect,
+        gender: cleanText(validated.participant.gender),
+        module_id: validated.moduleId,
+        sentence_id: validated.sentenceId,
+        audio_path: validated.path,
+        transcript,
+        english_translation: englishTranslation,
+        correction_flag: correctionFlag,
+        suggested_correction: suggestedCorrection,
+      })
+      .select("*")
+      .single();
+
+    if (dbError) {
+      if (dbError.code === "23505") {
+        const { data: racedRecord } = await supabase
+          .from("recordings")
+          .select("*")
+          .eq("participant_id", validated.participantId)
+          .eq("module_id", validated.moduleId)
+          .eq("sentence_id", validated.sentenceId)
+          .maybeSingle();
+        if (racedRecord?.audio_path === validated.path) {
+          return res.json({ recording: recordingToClient(racedRecord) });
+        }
+      }
+      await supabase.storage.from("audio-recordings").remove([validated.path]);
+      throw dbError;
+    }
+
+    if (correctionFlag && suggestedCorrection) {
+      const { error: feedbackError } = await supabase.from("feedback").insert({
+        participant_id: validated.participantId,
+        module_id: validated.moduleId,
+        sentence_id: validated.sentenceId,
+        correct_english: suggestedCorrection,
+        correction: suggestedCorrection,
+        audio_url: validated.path,
+      });
+      if (feedbackError) console.error("Recording correction insert failed:", feedbackError.message);
+    }
+
+    res.status(201).json({ recording: recordingToClient(data) });
+  } catch (error) {
+    console.error("Recording completion failed:", error.message);
+    res.status(500).json({ error: "Unable to save recording. Your audio is still available; please retry." });
   }
 });
 
@@ -1910,7 +2259,7 @@ router.get("/admin/research-tasks", requireAdmin, async (req, res) => {
 
     if (error) throw error;
 
-    res.json({ tasks: (data || []).map(taskToClient) });
+    res.json({ tasks: await enrichResearchTasks(data || []) });
   } catch (error) {
     console.error("Admin research tasks failed:", error.message);
     res.status(500).json({ error: "Unable to load research tasks." });
@@ -1927,6 +2276,30 @@ router.post("/admin/research-tasks", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Task title is required." });
     }
 
+    const linkError = await validateResearchTaskLinks(payload);
+    if (linkError) return res.status(400).json({ error: linkError });
+
+    if (payload.recording_id) {
+      payload.source_type = "recording";
+      payload.source_ref = String(payload.recording_id);
+      if (!payload.requested_outputs?.length) {
+        return res.status(400).json({ error: "Select at least one requested output." });
+      }
+
+      const { data: duplicate, error: duplicateError } = await supabase
+        .from("research_tasks")
+        .select("id")
+        .eq("recording_id", payload.recording_id)
+        .eq("assigned_to", payload.assigned_to)
+        .neq("status", "done")
+        .limit(1);
+
+      if (duplicateError) throw duplicateError;
+      if (duplicate?.length) {
+        return res.status(409).json({ error: "This recording already has an open assignment for that researcher." });
+      }
+    }
+
     const { data, error } = await supabase
       .from("research_tasks")
       .insert(payload)
@@ -1936,9 +2309,13 @@ router.post("/admin/research-tasks", requireAdmin, async (req, res) => {
     if (error) throw error;
 
     await writeActivity(req.admin, "create_research_task", "research_task", data.id);
-    res.status(201).json({ task: taskToClient(data) });
+    const [task] = await enrichResearchTasks([data]);
+    res.status(201).json({ task });
   } catch (error) {
     console.error("Admin research task create failed:", error.message);
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "This recording already has an open assignment for that researcher." });
+    }
     res.status(500).json({ error: "Unable to create research task." });
   }
 });
@@ -1947,8 +2324,27 @@ router.patch("/admin/research-tasks/:id", requireAdmin, async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
 
+    const { data: existingTask, error: existingError } = await supabase
+      .from("research_tasks")
+      .select("*")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+    if (!existingTask) return res.status(404).json({ error: "Research task not found." });
+
     const payload = taskPayload(req.body);
     delete payload.created_by;
+
+    const linkError = await validateResearchTaskLinks(payload, existingTask);
+    if (linkError) return res.status(400).json({ error: linkError });
+
+    const nextStatus = payload.status || existingTask.status;
+    if (nextStatus === "done" && existingTask.status !== "done") {
+      payload.completed_at = new Date().toISOString();
+    } else if (payload.status && payload.status !== "done") {
+      payload.completed_at = null;
+    }
 
     const { data, error } = await supabase
       .from("research_tasks")
@@ -1958,13 +2354,144 @@ router.patch("/admin/research-tasks/:id", requireAdmin, async (req, res) => {
       .maybeSingle();
 
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: "Research task not found." });
-
     await writeActivity(req.admin, "update_research_task", "research_task", req.params.id);
-    res.json({ task: taskToClient(data) });
+    const [task] = await enrichResearchTasks([data]);
+    res.json({ task });
   } catch (error) {
     console.error("Admin research task update failed:", error.message);
     res.status(500).json({ error: "Unable to update research task." });
+  }
+});
+
+router.post("/admin/research-tasks/:id/apply", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const { data: task, error } = await supabase
+      .from("research_tasks")
+      .select("*")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!task) return res.status(404).json({ error: "Research task not found." });
+    if (!task.recording_id) return res.status(400).json({ error: "This task is not linked to a recording." });
+
+    const { data: appliedRows, error: applyError } = await supabase.rpc(
+      "apply_research_task_result",
+      { task_id: task.id, admin_username: req.admin.username }
+    );
+
+    if (applyError) {
+      const message = applyError.message || "";
+      if (message.includes("required") || message.includes("not linked") || message.includes("no transcript or translation")) {
+        return res.status(400).json({ error: message });
+      }
+      if (message.includes("not found")) return res.status(404).json({ error: message });
+      throw applyError;
+    }
+
+    const updatedTask = appliedRows?.[0];
+    if (!updatedTask) return res.status(500).json({ error: "Assignment apply returned no result." });
+
+    await writeActivity(req.admin, "apply_research_task", "research_task", task.id, {
+      recordingId: task.recording_id,
+      fields: task.requested_outputs,
+    });
+
+    const [enriched] = await enrichResearchTasks([updatedTask]);
+    res.json({ task: enriched });
+  } catch (error) {
+    console.error("Admin research task apply failed:", error.message);
+    res.status(500).json({ error: "Unable to apply research task to recording." });
+  }
+});
+
+router.get("/researcher/tasks", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const participantId = cleanText(req.query.participantId);
+    if (!participantId) return res.status(400).json({ error: "Participant ID is required." });
+
+    const researcher = await requireActiveResearcherByParticipantId(participantId, res);
+    if (!researcher) return;
+
+    const { data, error } = await supabase
+      .from("research_tasks")
+      .select("*")
+      .eq("assigned_to", researcher.id)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    const tasks = await enrichResearchTasks(data || []);
+    res.json({ tasks: tasks.map(researcherTaskToClient) });
+  } catch (error) {
+    console.error("Researcher tasks failed:", error.message);
+    res.status(500).json({ error: "Unable to load assigned research tasks." });
+  }
+});
+
+router.patch("/researcher/tasks/:id", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const participantId = cleanText(req.body.participantId);
+    if (!participantId) return res.status(400).json({ error: "Participant ID is required." });
+
+    const researcher = await requireActiveResearcherByParticipantId(participantId, res);
+    if (!researcher) return;
+
+    const { data: task, error: taskError } = await supabase
+      .from("research_tasks")
+      .select("*")
+      .eq("id", req.params.id)
+      .eq("assigned_to", researcher.id)
+      .maybeSingle();
+
+    if (taskError) throw taskError;
+    if (!task) return res.status(404).json({ error: "Assigned task not found." });
+    if (task.status === "done") return res.status(409).json({ error: "Completed assignments cannot be changed." });
+
+    const requestedOutputs = Array.isArray(task.requested_outputs) ? task.requested_outputs : [];
+    const requestedStatus = cleanText(req.body.status);
+    const status = ["in_progress", "review"].includes(requestedStatus) ? requestedStatus : task.status;
+    const transcript = req.body.transcript !== undefined ? cleanText(req.body.transcript) : task.transcript;
+    const translation = req.body.translation !== undefined ? cleanText(req.body.translation) : task.translation;
+
+    if (status === "review") {
+      if (requestedOutputs.includes("transcript") && !transcript) {
+        return res.status(400).json({ error: "Complete the transcript before submitting for review." });
+      }
+      if (requestedOutputs.includes("translation") && !translation) {
+        return res.status(400).json({ error: "Complete the translation before submitting for review." });
+      }
+    }
+
+    const now = new Date().toISOString();
+    const { data: updated, error } = await supabase
+      .from("research_tasks")
+      .update({
+        transcript,
+        translation,
+        researcher_notes: req.body.researcherNotes !== undefined
+          ? cleanText(req.body.researcherNotes)
+          : task.researcher_notes,
+        status,
+        submitted_at: status === "review" ? now : null,
+        admin_feedback: status === "review" ? null : task.admin_feedback,
+        updated_at: now,
+      })
+      .eq("id", task.id)
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    const [enriched] = await enrichResearchTasks([updated]);
+    res.json({ task: researcherTaskToClient(enriched) });
+  } catch (error) {
+    console.error("Researcher task update failed:", error.message);
+    res.status(500).json({ error: "Unable to update assigned task." });
   }
 });
 
