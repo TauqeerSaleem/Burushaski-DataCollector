@@ -26,6 +26,11 @@ const MAX_PROMPT_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_RECORDING_BYTES = 30 * 1024 * 1024;
 const MAX_RECORDING_MS = 5 * 60 * 1000;
 const PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
+const RESEARCH_TASK_TYPES = new Set(["transcription", "translation", "validation", "metadata_review"]);
+const RESEARCH_TASK_STATUSES = new Set(["todo", "in_progress", "review", "done", "blocked"]);
+const RESEARCH_TASK_PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
+const RESEARCH_SOURCE_TYPES = new Set(["audio", "text", "content_url", "recording", "feedback"]);
+const RESEARCH_OUTPUTS = new Set(["transcript", "translation", "metadata_review", "validation"]);
 const ALLOWED_PROMPT_MEDIA_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -521,20 +526,20 @@ function taskToClient(row) {
 function taskPayload(body, admin) {
   return {
     ...(body.title !== undefined ? { title: cleanText(body.title) } : {}),
-    ...(body.taskType !== undefined ? { task_type: cleanText(body.taskType) || "transcription" } : {}),
+    ...(body.taskType !== undefined ? { task_type: cleanText(body.taskType) } : {}),
     ...(body.assignedTo !== undefined ? { assigned_to: cleanText(body.assignedTo) } : {}),
     ...(body.recordingId !== undefined
       ? { recording_id: cleanText(body.recordingId) ? cleanInteger(body.recordingId, null, 1) : null }
       : {}),
     ...(body.requestedOutputs !== undefined
-      ? { requested_outputs: cleanStringArray(body.requestedOutputs).filter((value) => ["transcript", "translation", "metadata_review", "validation"].includes(value)) }
+      ? { requested_outputs: cleanStringArray(body.requestedOutputs).filter((value) => RESEARCH_OUTPUTS.has(value)) }
       : {}),
-    ...(body.sourceType !== undefined ? { source_type: cleanText(body.sourceType) || "audio" } : {}),
+    ...(body.sourceType !== undefined ? { source_type: cleanText(body.sourceType) } : {}),
     ...(body.sourceRef !== undefined ? { source_ref: cleanText(body.sourceRef) } : {}),
     ...(body.sourceText !== undefined ? { source_text: cleanText(body.sourceText) } : {}),
     ...(body.instructions !== undefined ? { instructions: cleanText(body.instructions) } : {}),
-    ...(body.status !== undefined ? { status: cleanText(body.status) || "todo" } : {}),
-    ...(body.priority !== undefined ? { priority: cleanText(body.priority) || "normal" } : {}),
+    ...(body.status !== undefined ? { status: cleanText(body.status) } : {}),
+    ...(body.priority !== undefined ? { priority: cleanText(body.priority) } : {}),
     ...(body.dueDate !== undefined ? { due_date: cleanText(body.dueDate) } : {}),
     ...(body.transcript !== undefined ? { transcript: cleanText(body.transcript) } : {}),
     ...(body.translation !== undefined ? { translation: cleanText(body.translation) } : {}),
@@ -544,6 +549,22 @@ function taskPayload(body, admin) {
     ...(admin ? { created_by: admin.username } : {}),
     updated_at: new Date().toISOString(),
   };
+}
+
+function validateResearchTaskValues(payload) {
+  if (payload.task_type !== undefined && !RESEARCH_TASK_TYPES.has(payload.task_type)) {
+    return "Invalid research task type.";
+  }
+  if (payload.source_type !== undefined && !RESEARCH_SOURCE_TYPES.has(payload.source_type)) {
+    return "Invalid research task source type.";
+  }
+  if (payload.status !== undefined && !RESEARCH_TASK_STATUSES.has(payload.status)) {
+    return "Invalid research task status.";
+  }
+  if (payload.priority !== undefined && !RESEARCH_TASK_PRIORITIES.has(payload.priority)) {
+    return "Invalid research task priority.";
+  }
+  return null;
 }
 
 function storageSegment(value) {
@@ -908,7 +929,7 @@ router.post("/recordings/upload-intent", async (req, res) => {
 
     const { data, error } = await supabase.storage
       .from("audio-recordings")
-      .createSignedUploadUrl(validated.path, { upsert: true });
+      .createSignedUploadUrl(validated.path, { upsert: false });
 
     if (error) throw error;
     res.json({
@@ -2275,6 +2296,8 @@ router.post("/admin/research-tasks", requireAdmin, async (req, res) => {
     if (!payload.title) {
       return res.status(400).json({ error: "Task title is required." });
     }
+    const valueError = validateResearchTaskValues(payload);
+    if (valueError) return res.status(400).json({ error: valueError });
 
     const linkError = await validateResearchTaskLinks(payload);
     if (linkError) return res.status(400).json({ error: linkError });
@@ -2336,6 +2359,8 @@ router.patch("/admin/research-tasks/:id", requireAdmin, async (req, res) => {
     const payload = taskPayload(req.body);
     delete payload.created_by;
 
+    const valueError = validateResearchTaskValues(payload);
+    if (valueError) return res.status(400).json({ error: valueError });
     const linkError = await validateResearchTaskLinks(payload, existingTask);
     if (linkError) return res.status(400).json({ error: linkError });
 
@@ -2359,6 +2384,9 @@ router.patch("/admin/research-tasks/:id", requireAdmin, async (req, res) => {
     res.json({ task });
   } catch (error) {
     console.error("Admin research task update failed:", error.message);
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "This recording already has an open assignment for that researcher." });
+    }
     res.status(500).json({ error: "Unable to update research task." });
   }
 });

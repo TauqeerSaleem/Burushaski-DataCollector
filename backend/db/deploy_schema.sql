@@ -201,6 +201,17 @@ create table if not exists public.contributions (
   created_at timestamp default now()
 );
 
+alter table public.contributions add column if not exists username text;
+alter table public.contributions add column if not exists role text;
+alter table public.contributions add column if not exists content_type text;
+alter table public.contributions add column if not exists media_url text;
+alter table public.contributions add column if not exists description text;
+alter table public.contributions add column if not exists language_notes text;
+alter table public.contributions add column if not exists speaker_metadata text;
+alter table public.contributions add column if not exists turn_taking_notes text;
+alter table public.contributions add column if not exists status text default 'pending';
+alter table public.contributions add column if not exists created_at timestamp default now();
+
 alter table public.app_users
 add column if not exists active boolean not null default true;
 
@@ -370,6 +381,7 @@ begin
 
   if not found then raise exception 'Research task not found.'; end if;
   if task_row.recording_id is null then raise exception 'Research task is not linked to a recording.'; end if;
+  if task_row.status <> 'review' then raise exception 'Research task must be awaiting review before it can be applied.'; end if;
   if 'transcript' = any(task_row.requested_outputs) and nullif(trim(task_row.transcript), '') is null then
     raise exception 'A transcript is required before applying this task.';
   end if;
