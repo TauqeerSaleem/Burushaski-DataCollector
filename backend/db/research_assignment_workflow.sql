@@ -15,6 +15,17 @@ create table if not exists public.contributions (
   created_at timestamp default now()
 );
 
+alter table public.contributions add column if not exists username text;
+alter table public.contributions add column if not exists role text;
+alter table public.contributions add column if not exists content_type text;
+alter table public.contributions add column if not exists media_url text;
+alter table public.contributions add column if not exists description text;
+alter table public.contributions add column if not exists language_notes text;
+alter table public.contributions add column if not exists speaker_metadata text;
+alter table public.contributions add column if not exists turn_taking_notes text;
+alter table public.contributions add column if not exists status text default 'pending';
+alter table public.contributions add column if not exists created_at timestamp default now();
+
 create index if not exists contributions_username_created_idx
 on public.contributions (username, created_at desc);
 
@@ -78,6 +89,10 @@ begin
 
   if task_row.recording_id is null then
     raise exception 'Research task is not linked to a recording.';
+  end if;
+
+  if task_row.status <> 'review' then
+    raise exception 'Research task must be awaiting review before it can be applied.';
   end if;
 
   if 'transcript' = any(task_row.requested_outputs)
