@@ -2,7 +2,12 @@ import { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import Dashboard from "./Dashboard";
-import { createContribution, getUserContributions } from "../utils/userApi";
+import {
+  createContribution,
+  getResearcherTasks,
+  getUserContributions,
+  updateResearcherTask,
+} from "../utils/userApi";
 import { getRoleLabel, normalizeUserRole, USER_ROLES } from "../utils/roles";
 
 const contentTypes = ["Audio Link", "Video Link"];
@@ -22,6 +27,105 @@ const initialResearcherForm = {
   turnTakingNotes: "",
   languageNotes: "",
 };
+
+function ResearchTaskCard({ task, participantId, onUpdated }) {
+  const [draft, setDraft] = useState({
+    transcript: task.transcript || "",
+    translation: task.translation || "",
+    researcherNotes: task.researcherNotes || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const requested = task.requestedOutputs || [];
+  const completed = task.status === "done";
+
+  const save = async (status) => {
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await updateResearcherTask(task.id, participantId, {
+        ...draft,
+        status,
+      });
+      onUpdated(updated);
+    } catch (err) {
+      setError(err.message || "Unable to update assignment.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <article className="space-y-4 rounded-xl border border-neutral-800 bg-neutral-900 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-white">{task.title}</h3>
+          <p className="mt-1 text-sm text-neutral-400">
+            {requested.length ? requested.join(" · ") : task.taskType}
+            {task.dueDate ? ` · Due ${task.dueDate}` : ""}
+          </p>
+        </div>
+        <StatusBadge status={task.status === "review" ? "submitted" : task.status} />
+      </div>
+
+      {task.recording ? (
+        <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+          <p className="text-sm text-neutral-300">{task.recording.promptText || "Prompt text unavailable"}</p>
+          <p className="text-xs text-neutral-500">
+            {task.recording.username || task.recording.participantId} · {task.recording.dialect || "All dialects"}
+          </p>
+          {task.recording.audioUrl && <audio className="w-full" controls src={task.recording.audioUrl} />}
+        </div>
+      ) : (
+        task.sourceText && <p className="rounded-lg bg-neutral-950 p-4 text-sm text-neutral-300">{task.sourceText}</p>
+      )}
+
+      {task.instructions && (
+        <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/5 p-3 text-sm text-yellow-100">
+          {task.instructions}
+        </div>
+      )}
+      {task.adminFeedback && (
+        <div className="rounded-lg border border-red-400/30 bg-red-400/10 p-3 text-sm text-red-100">
+          <strong>Admin feedback:</strong> {task.adminFeedback}
+        </div>
+      )}
+
+      {requested.includes("transcript") && (
+        <label className="block space-y-2">
+          <FieldLabel>Burushaski transcript</FieldLabel>
+          <textarea className="min-h-36 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-white" disabled={completed} value={draft.transcript} onChange={(event) => setDraft({ ...draft, transcript: event.target.value })} />
+        </label>
+      )}
+      {requested.includes("translation") && (
+        <label className="block space-y-2">
+          <FieldLabel>English translation</FieldLabel>
+          <textarea className="min-h-36 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-white" disabled={completed} value={draft.translation} onChange={(event) => setDraft({ ...draft, translation: event.target.value })} />
+        </label>
+      )}
+      {(requested.includes("metadata_review") || requested.includes("validation") || !requested.length) && (
+        <label className="block space-y-2">
+          <FieldLabel>Researcher notes</FieldLabel>
+          <textarea className="min-h-28 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-white" disabled={completed} value={draft.researcherNotes} onChange={(event) => setDraft({ ...draft, researcherNotes: event.target.value })} />
+        </label>
+      )}
+
+      {error && <p className="text-sm text-red-300">{error}</p>}
+      {!completed && task.status !== "review" && (
+        <div className="flex flex-wrap gap-2">
+          <button type="button" disabled={saving} onClick={() => save("in_progress")} className="rounded bg-neutral-700 px-4 py-2 text-sm text-white disabled:opacity-50">
+            {saving ? "Saving..." : "Save progress"}
+          </button>
+          <button type="button" disabled={saving} onClick={() => save("review")} className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">
+            Submit for review
+          </button>
+        </div>
+      )}
+      {task.status === "review" && <p className="text-sm text-yellow-300">Submitted and waiting for admin review.</p>}
+      {completed && <p className="text-sm text-emerald-300">Completed and approved.</p>}
+    </article>
+  );
+}
 
 function FieldLabel({ children }) {
   return <span className="text-sm font-semibold text-neutral-200">{children}</span>;
@@ -277,12 +381,32 @@ function ContentContributorDashboard({ user, role }) {
   );
 }
 
-function ResearcherDashboard({ user, role, onLogout }) {
+function ResearcherDashboard({ user, role, onLogout, onBackToVolunteer }) {
   const [form, setForm] = useState(initialResearcherForm);
+  const [tasks, setTasks] = useState([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksError, setTasksError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const { contributions, setContributions, loading, error, setError } =
     useContributions(user.username);
+
+  useEffect(() => {
+    let active = true;
+    getResearcherTasks(user.participantId)
+      .then((rows) => {
+        if (active) setTasks(rows);
+      })
+      .catch((err) => {
+        if (active) setTasksError(err.message || "Unable to load assigned tasks.");
+      })
+      .finally(() => {
+        if (active) setTasksLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user.participantId]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -317,9 +441,41 @@ function ResearcherDashboard({ user, role, onLogout }) {
       description="Submit supervised long-form recordings with speaker metadata, turn-taking notes, transcripts, and translations."
       onLogout={onLogout}
     >
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+        <div>
+          <h2 className="font-semibold text-white">Assigned research tasks</h2>
+          <p className="text-sm text-neutral-400">Complete work assigned by an administrator and submit it for review.</p>
+        </div>
+        <button type="button" onClick={onBackToVolunteer} className="rounded-lg bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300">
+          Back to volunteer tasks
+        </button>
+      </div>
+
+      {tasksLoading && <p className="text-sm text-neutral-400">Loading assigned tasks...</p>}
+      {tasksError && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{tasksError}</p>}
+      {!tasksLoading && !tasksError && !tasks.length && (
+        <p className="rounded-lg border border-neutral-800 bg-neutral-900 p-5 text-sm text-neutral-400">
+          You have no assigned research tasks right now.
+        </p>
+      )}
+      <div className="space-y-4">
+        {tasks.map((task) => (
+          <ResearchTaskCard
+            key={task.id}
+            task={task}
+            participantId={user.participantId}
+            onUpdated={(updated) => setTasks((current) => current.map((item) => item.id === updated.id ? updated : item))}
+          />
+        ))}
+      </div>
+
+      <details className="rounded-lg border border-neutral-800 bg-neutral-900">
+        <summary className="cursor-pointer px-5 py-4 font-semibold text-yellow-400">
+          Submit a separate long-form research contribution
+        </summary>
       <form
         onSubmit={handleSubmit}
-        className="space-y-4 rounded-lg border border-neutral-800 bg-neutral-900 p-5"
+        className="space-y-4 border-t border-neutral-800 p-5"
       >
         <label className="block space-y-2">
           <FieldLabel>Content type</FieldLabel>
@@ -390,6 +546,7 @@ function ResearcherDashboard({ user, role, onLogout }) {
           {submitting ? "Submitting..." : "Submit research contribution"}
         </button>
       </form>
+      </details>
 
       <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-5">
         <h2 className="text-lg font-semibold text-yellow-400">Your Submissions</h2>
@@ -423,6 +580,7 @@ function AdminDashboard({ role }) {
 export default function RoleDashboard() {
   const { user, setUser } = useUser();
   const navigate = useNavigate();
+  const [showResearchTasks, setShowResearchTasks] = useState(false);
 
   if (!user) {
     return <Navigate to="/login" replace />;
@@ -439,10 +597,27 @@ export default function RoleDashboard() {
   }
 
   if (role === USER_ROLES.RESEARCHER) {
+    if (!showResearchTasks) {
+      return (
+        <Dashboard
+          headerAction={(
+            <button
+              type="button"
+              onClick={() => setShowResearchTasks(true)}
+              className="rounded bg-emerald-600 px-3 py-1 text-sm font-bold text-white hover:bg-emerald-700"
+            >
+              Assigned Research Tasks
+            </button>
+          )}
+        />
+      );
+    }
+
     return (
       <ResearcherDashboard
         user={user}
         role={role}
+        onBackToVolunteer={() => setShowResearchTasks(false)}
         onLogout={() => {
           setUser(null);
           localStorage.removeItem("hasSeenInstructions");

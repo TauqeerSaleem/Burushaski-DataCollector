@@ -224,6 +224,15 @@ export async function updateResearchTask(id, task) {
   return data.task;
 }
 
+export async function applyResearchTask(id) {
+  const data = await request(`/api/admin/research-tasks/${encodeURIComponent(id)}/apply`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+  return data.task;
+}
+
 export async function fetchAdmins() {
   const data = await request("/api/admin/admins");
   return data.admins || [];

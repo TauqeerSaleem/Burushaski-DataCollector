@@ -1,10 +1,9 @@
 import { useState, useRef } from "react";
 import { Navigate, useNavigate, Link } from "react-router-dom";
 import { useUser } from "../context/UserContext";
-import { subscribeToPush } from "../hooks/usePushNotifications";
 import { USER_ROLES } from "../utils/roles";
-import { signupUser, checkUsernameAvailable } from "../utils/userApi";
-import { clearSignupDraft, draftToSignupPayload, saveSignupDraft } from "../utils/signupDraft";
+import { checkUsernameAvailable } from "../utils/userApi";
+import { saveSignupDraft } from "../utils/signupDraft";
 
 const COUNTRIES = [
   "Afghanistan","Albania","Algeria","Andorra","Angola","Argentina","Armenia","Australia","Austria","Azerbaijan",
@@ -65,11 +64,9 @@ export default function Signup() {
   const [livedTimeLived, setLivedTimeLived] = useState("");
   const [placesLived, setPlacesLived] = useState([]);
   const [placesLivedError, setPlacesLivedError] = useState("");
-  const [submitError, setSubmitError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [step, setStep] = useState(1);
 
-  const { user, setUser } = useUser();
+  const { user } = useUser();
   const navigate = useNavigate();
 
   if (user) {
@@ -228,7 +225,7 @@ export default function Signup() {
 
   const hasCrowdsourcedInfo = dialect;
 
-  const canSubmit = hasBasicInfo && (isResearcher || hasCrowdsourcedInfo) && !submitting;
+  const canSubmit = hasBasicInfo && (isResearcher || hasCrowdsourcedInfo);
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -253,30 +250,7 @@ export default function Signup() {
       placesLived,
     };
 
-    if (isResearcher) {
-      setSubmitError("");
-      setSubmitting(true);
 
-      try {
-        const researcher = await signupUser({
-          ...draftToSignupPayload(draft),
-          consentAccepted: false,
-        });
-        clearSignupDraft();
-        setUser(researcher);
-
-        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          await subscribeToPush(researcher);
-        }
-
-        navigate("/dashboard", { replace: true });
-      } catch (err) {
-        setSubmitError(err.message || "Unable to complete signup.");
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
 
     saveSignupDraft(draft);
     navigate("/consent");
@@ -462,14 +436,12 @@ export default function Signup() {
                 )}
               </div>
 
-              {submitError && <p className="text-xs text-red-400">{submitError}</p>}
-
               <button
-                onClick={isResearcher ? submit : () => setStep(2)}
-                disabled={!canSubmit || submitting}
+                onClick={() => setStep(2)}
+                disabled={!canSubmit}
                 className="w-full rounded-lg bg-yellow-400 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {submitting ? "Creating account..." : isResearcher ? "Create Account" : "Next"}
+                Next
               </button>
 
               <p className="text-center text-xs text-gray-500">
@@ -749,8 +721,6 @@ export default function Signup() {
                 </div>
               </div>
 
-              {submitError && <p className="text-xs text-red-400">{submitError}</p>}
-
               <div className="flex gap-3">
                 <button
                   type="button"
@@ -761,7 +731,7 @@ export default function Signup() {
                 </button>
                 <button
                   onClick={submit}
-                  disabled={submitting}
+                  disabled={!canSubmit}
                   className="flex-1 rounded-lg bg-yellow-400 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Next: Review Consent Form

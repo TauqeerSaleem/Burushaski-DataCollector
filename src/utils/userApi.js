@@ -106,3 +106,21 @@ export async function getUserContributions(username) {
 
   return data.contributions || [];
 }
+
+export async function getResearcherTasks(participantId) {
+  const data = await request(
+    `/api/researcher/tasks?participantId=${encodeURIComponent(participantId)}`,
+    { method: "GET", retries: 1 }
+  );
+
+  return data.tasks || [];
+}
+
+export async function updateResearcherTask(id, participantId, task) {
+  const data = await request(`/api/researcher/tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ ...task, participantId }),
+  });
+
+  return data.task;
+}
