@@ -253,30 +253,7 @@ export default function Signup() {
       placesLived,
     };
 
-    if (isResearcher) {
-      setSubmitError("");
-      setSubmitting(true);
 
-      try {
-        const researcher = await signupUser({
-          ...draftToSignupPayload(draft),
-          consentAccepted: false,
-        });
-        clearSignupDraft();
-        setUser(researcher);
-
-        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          await subscribeToPush(researcher);
-        }
-
-        navigate("/dashboard", { replace: true });
-      } catch (err) {
-        setSubmitError(err.message || "Unable to complete signup.");
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
 
     saveSignupDraft(draft);
     navigate("/consent");
@@ -465,11 +442,11 @@ export default function Signup() {
               {submitError && <p className="text-xs text-red-400">{submitError}</p>}
 
               <button
-                onClick={isResearcher ? submit : () => setStep(2)}
+                onClick={() => setStep(2)}
                 disabled={!canSubmit || submitting}
                 className="w-full rounded-lg bg-yellow-400 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {submitting ? "Creating account..." : isResearcher ? "Create Account" : "Next"}
+                {submitting ? "Creating account..." : "Next"}
               </button>
 
               <p className="text-center text-xs text-gray-500">
