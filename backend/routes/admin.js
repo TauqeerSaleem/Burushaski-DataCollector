@@ -845,20 +845,28 @@ async function validateRecordingRequest(body, res) {
   const participant = await requireActiveParticipant(participantId, res);
   if (!participant) return null;
 
-  const { data: prompt, error: promptError } = await supabase
+  const participantDialect = cleanDialect(participant.dialect);
+
+  const { data: promptRows, error: promptError } = await supabase
     .from("prompt_bank")
     .select("active, dialect")
     .eq("module_id", moduleId)
-    .eq("prompt_id", sentenceId)
-    .maybeSingle();
+    .eq("prompt_id", sentenceId);
 
   if (promptError) throw promptError;
+  const rows = promptRows || [];
+  // prompt_id can exist multiple times (once per dialect); prefer the closest match
+  const prompt =
+    rows.find(p => cleanDialect(p.dialect) === participantDialect) ||
+    rows.find(p => !cleanDialect(p.dialect) || cleanDialect(p.dialect) === "all") ||
+    rows[0] ||
+    null;
+
   if (!prompt || prompt.active === false) {
     res.status(409).json({ error: "This prompt is no longer active. Load another prompt and try again." });
     return null;
   }
 
-  const participantDialect = cleanDialect(participant.dialect);
   const promptDialect = cleanDialect(prompt.dialect);
   if (promptDialect && promptDialect !== "all" && promptDialect !== participantDialect) {
     res.status(403).json({ error: "This prompt is not assigned to the participant's dialect." });
@@ -918,7 +926,8 @@ router.post("/recordings/upload-intent", async (req, res) => {
     });
   } catch (error) {
     console.error("Recording upload intent failed:", error.message);
-    res.status(500).json({ error: "Unable to prepare recording upload. Please try again." });
+    const detail = process.env.NODE_ENV !== "production" ? ` (${error.message})` : "";
+    res.status(500).json({ error: `Unable to prepare recording upload. Please try again.${detail}` });
   }
 });
 
@@ -952,16 +961,15 @@ router.post("/recordings/complete", async (req, res) => {
     if (!storedFile) {
       return res.status(409).json({ error: "The audio file did not finish uploading. Please try again." });
     }
-    const storedSize = Number(storedFile.metadata?.size || 0);
+    const storedSize = storedFile.metadata?.size != null ? Number(storedFile.metadata.size) : null;
     const storedContentType = cleanMimeType(storedFile.metadata?.mimetype);
-    if (
-      storedSize < 1 ||
-      storedSize > MAX_RECORDING_BYTES ||
-      storedSize !== validated.fileSize ||
-      (storedContentType && storedContentType !== validated.contentType)
-    ) {
+    if (storedSize !== null && (storedSize < 1 || storedSize > MAX_RECORDING_BYTES)) {
       await supabase.storage.from("audio-recordings").remove([validated.path]);
-      return res.status(400).json({ error: "The uploaded audio file is incomplete or invalid. Please record it again." });
+      return res.status(400).json({ error: "The uploaded audio file is empty or too large. Please record it again." });
+    }
+    if (storedContentType && storedContentType !== validated.contentType) {
+      await supabase.storage.from("audio-recordings").remove([validated.path]);
+      return res.status(400).json({ error: "The uploaded audio file has the wrong format. Please record it again." });
     }
 
     const transcript = cleanOptionalText(req.body.transcript);

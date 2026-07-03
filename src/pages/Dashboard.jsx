@@ -4,6 +4,8 @@ import { useUser } from "../context/UserContext";
 import { pickNextPrompt } from "../utils/randomizer";
 import { useRecorder } from "../hooks/useRecorder";
 import { uploadRecording } from "../utils/uploadRecording";
+import { db } from "../db/indexdb";
+import { syncPendingRecordings } from "../utils/syncRecordings";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
@@ -28,6 +30,7 @@ export default function Dashboard({ headerAction = null }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [showSuccess, setShowSuccess] = useState(false);
+  const [showSavedLocally, setShowSavedLocally] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [englishTranslation, setEnglishTranslation] = useState("");
   const [correctionFlag, setCorrectionFlag] = useState(false);
@@ -66,12 +69,20 @@ const load = async () => {
 
     if (!dashRes.ok) throw new Error(dashData.error || "Could not load recording prompts.");
 
+    // Merge server-recorded IDs with any pending local recordings so they
+    // don't reappear as unrecorded prompts while waiting to sync
+    const pendingLocal = await db.recordings.where("status").equals("pending").toArray();
+    const pendingLocalIds = pendingLocal.map((r) => r.sentenceId);
+
     setAllSentences(dashData.prompts || []);
-    setRecordedIds(dashData.recordedIds || []);
+    setRecordedIds([...new Set([...(dashData.recordedIds || []), ...pendingLocalIds])]);
     setGlobalCounts(dashData.globalCounts || {});
     setAllValidationTasks((validationData.tasks || []).filter(t => t.participantId !== user.participantId));
     setValidatedIds(validationData.validatedIds || []);
     setGlobalValidationCounts(validationData.globalValidationCounts || {});
+
+    // Attempt to flush any pending recordings in the background
+    syncPendingRecordings().catch(() => {});
   } catch (err) {
     setError(err.message || "Could not load recording prompts.");
   } finally {
@@ -109,6 +120,18 @@ const load = async () => {
     const timer = setTimeout(() => setShowSuccess(false), 2500);
     return () => clearTimeout(timer);
   }, [showSuccess]);
+
+  useEffect(() => {
+    if (!showSavedLocally) return;
+    const timer = setTimeout(() => setShowSavedLocally(false), 3500);
+    return () => clearTimeout(timer);
+  }, [showSavedLocally]);
+
+  useEffect(() => {
+    const handleOnline = () => syncPendingRecordings().catch(() => {});
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, []);
 
   const handleValidationVote = async (vote) => {
   if (!currentCard || validationVoting) return;
@@ -220,21 +243,40 @@ const load = async () => {
     setUploading(true);
     setUploadError("");
 
+    const uploadPayload = {
+      participantId: user.participantId,
+      dialect: user.dialect,
+      gender: user.gender,
+      moduleId: currentCard.module_id,
+      sentenceId: currentCard.prompt_id,
+      transcript,
+      englishTranslation: currentCard.prompt_type === "picture_description" ? englishTranslation : "",
+      correctionFlag,
+      suggestedCorrection,
+      promptType: currentCard.prompt_type,
+      durationMs: recordingDurationMsRef.current,
+    };
+
+    // Save locally first so the recording is never lost on upload failure
+    let localId;
     try {
-      await uploadRecording({
-        blob: audioBlob,
-        participantId: user.participantId,
-        dialect: user.dialect,
-        gender: user.gender,
-        moduleId: currentCard.module_id,
-        sentenceId: currentCard.prompt_id,
-        transcript,
-        englishTranslation: currentCard.prompt_type === "picture_description" ? englishTranslation : "",
-        correctionFlag,
-        suggestedCorrection,
-        promptType: currentCard.prompt_type,
-        durationMs: recordingDurationMsRef.current,
+      localId = await db.recordings.add({
+        ...uploadPayload,
+        audioBlob,
+        status: "pending",
+        createdAt: new Date(),
       });
+      console.log(`[offline-save] Saved locally (id=${localId}, sentence=${uploadPayload.sentenceId})`);
+    } catch (dbErr) {
+      console.error("Could not save recording locally:", dbErr);
+    }
+
+    try {
+      await uploadRecording({ blob: audioBlob, ...uploadPayload });
+
+      if (localId != null) {
+        await db.recordings.update(localId, { status: "synced", syncedAt: new Date() });
+      }
 
       setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
       setGlobalCounts((prev) => ({
@@ -248,6 +290,8 @@ const load = async () => {
     } catch (err) {
       console.error("Upload failed:", err);
       if (err.message?.includes("no longer active")) {
+        // Deactivated prompt — discard the local copy too
+        if (localId != null) await db.recordings.delete(localId);
         clearRecordingState();
         setAllSentences((current) =>
           (current || []).filter(
@@ -257,6 +301,12 @@ const load = async () => {
           )
         );
         setUploadError("That prompt was deactivated by an administrator. Loading another prompt.");
+      } else if (localId != null) {
+        // Recording is safely on device — move on and sync later
+        setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
+        clearRecordingState();
+        setShowSavedLocally(true);
+        pickNextCard(pickCount);
       } else {
         setUploadError(err.message || "Upload failed. Please check your connection and try again.");
       }
@@ -331,6 +381,13 @@ const recordedForDialect = allSentences
       {showSuccess && (
         <div className="bg-green-100 text-green-800 rounded-lg px-4 py-2 text-sm font-semibold flex items-center gap-2 max-w-2xl mx-auto">
           ✓ Recording saved
+        </div>
+      )}
+
+      {/* Saved locally — will sync when connection is restored */}
+      {showSavedLocally && (
+        <div className="bg-yellow-100 text-yellow-800 rounded-lg px-4 py-2 text-sm font-semibold flex items-center gap-2 max-w-2xl mx-auto">
+          ↑ Recording saved on device — will upload when connected
         </div>
       )}
 
