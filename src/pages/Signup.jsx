@@ -215,7 +215,6 @@ export default function Signup() {
   };
 
   const hasBasicInfo =
-    (!isResearcher || name.trim()) &&
     username &&
     validateUsername(username) &&
     role &&
@@ -420,20 +419,6 @@ export default function Signup() {
                   </div>
                 )}
 
-                {/* Name — researcher only */}
-                {isResearcher && (
-                  <div className="space-y-1">
-                    <label className="text-xs text-gray-400">Name *</label>
-                    <input
-                      type="text"
-                      className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                      placeholder="Your name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      autoComplete="name"
-                    />
-                  </div>
-                )}
               </div>
 
               <button

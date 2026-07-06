@@ -580,7 +580,7 @@ function AdminDashboard({ role }) {
 export default function RoleDashboard() {
   const { user, setUser } = useUser();
   const navigate = useNavigate();
-  const [showResearchTasks, setShowResearchTasks] = useState(false);
+  const [showResearchTasks, setShowResearchTasks] = useState(true);
 
   if (!user) {
     return <Navigate to="/login" replace />;
