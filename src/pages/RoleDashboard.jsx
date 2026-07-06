@@ -250,17 +250,12 @@ function useContributions(username) {
   return { contributions, setContributions, loading, error, setError };
 }
 
-function ContentContributorDashboard({ user, role }) {
+function ContentContributorDashboard({ user, role, onBack }) {
   const [form, setForm] = useState(initialContentForm);
-  const [showVolunteerTasks, setShowVolunteerTasks] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const { contributions, setContributions, loading, error, setError } =
     useContributions(user.username);
-
-  if (showVolunteerTasks) {
-    return <Dashboard />;
-  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -366,17 +361,13 @@ function ContentContributorDashboard({ user, role }) {
         </div>
       </div>
 
-      <p className="text-sm text-neutral-400">
-        You can also contribute through{" "}
-        <button
-          className="font-semibold text-yellow-400 hover:text-yellow-300"
-          type="button"
-          onClick={() => setShowVolunteerTasks(true)}
-        >
-          Volunteer tasks
-        </button>{" "}
-        using the same account.
-      </p>
+      <button
+        type="button"
+        onClick={onBack}
+        className="rounded-lg border border-neutral-700 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800"
+      >
+        ← Back to recording tasks
+      </button>
     </DashboardShell>
   );
 }
@@ -581,6 +572,7 @@ export default function RoleDashboard() {
   const { user, setUser } = useUser();
   const navigate = useNavigate();
   const [showResearchTasks, setShowResearchTasks] = useState(true);
+  const [showContentForm, setShowContentForm] = useState(false);
 
   if (!user) {
     return <Navigate to="/login" replace />;
@@ -593,7 +585,28 @@ export default function RoleDashboard() {
   }
 
   if (role === USER_ROLES.CONTENT_CONTRIBUTOR) {
-    return <ContentContributorDashboard user={user} role={role} />;
+    if (!showContentForm) {
+      return (
+        <Dashboard
+          headerAction={(
+            <button
+              type="button"
+              onClick={() => setShowContentForm(true)}
+              className="rounded bg-emerald-600 px-3 py-1 text-sm font-bold text-white hover:bg-emerald-700"
+            >
+              Add Social Media Content
+            </button>
+          )}
+        />
+      );
+    }
+    return (
+      <ContentContributorDashboard
+        user={user}
+        role={role}
+        onBack={() => setShowContentForm(false)}
+      />
+    );
   }
 
   if (role === USER_ROLES.RESEARCHER) {
