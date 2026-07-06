@@ -224,7 +224,7 @@ export default function Signup() {
 
   const hasCrowdsourcedInfo = dialect;
 
-  const canSubmit = hasBasicInfo && (isResearcher || hasCrowdsourcedInfo);
+  const canSubmit = hasBasicInfo && hasCrowdsourcedInfo;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -401,23 +401,21 @@ export default function Signup() {
                 )}
 
                 {/* Dialect */}
-                {!isResearcher && (
-                  <div className="space-y-1">
-                    <label className="text-xs text-gray-400">
-                      Which Burushaski dialect do you primarily speak? *
-                    </label>
-                    <select
-                      className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                      value={dialect}
-                      onChange={(e) => setDialect(e.target.value)}
-                    >
-                      <option value="">Select dialect</option>
-                      <option value="hunza">Hunza</option>
-                      <option value="nagar">Nagar</option>
-                      <option value="yasin">Yasin</option>
-                    </select>
-                  </div>
-                )}
+                <div className="space-y-1">
+                  <label className="text-xs text-gray-400">
+                    Which Burushaski dialect do you primarily speak? *
+                  </label>
+                  <select
+                    className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                    value={dialect}
+                    onChange={(e) => setDialect(e.target.value)}
+                  >
+                    <option value="">Select dialect</option>
+                    <option value="hunza">Hunza</option>
+                    <option value="nagar">Nagar</option>
+                    <option value="yasin">Yasin</option>
+                  </select>
+                </div>
 
               </div>
 
