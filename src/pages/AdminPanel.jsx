@@ -915,7 +915,21 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
 }
 
 function VisualGenomeBank({ prompts, responses, onRefresh }) {
-  const [form, setForm] = useState({ fileName: "", description: "" });
+  const [form, setForm] = useState({
+    fileName: "",
+    vgImageId: "",
+    imageUrl: "",
+    imageWidth: "",
+    imageHeight: "",
+    cocoId: "",
+    flickrId: "",
+    vgRegionId: "",
+    regionX: "",
+    regionY: "",
+    regionWidth: "",
+    regionHeight: "",
+    description: "",
+  });
   const [filters, setFilters] = useState({ search: "", dialect: "all", researcher: "all" });
   const [sort, setSort] = useState({ key: "description", direction: "asc" });
   const [error, setError] = useState("");
@@ -932,7 +946,8 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
         descriptionId: prompt.id,
         description: prompt.description,
         fileName: prompt.fileName,
-        sourceImageId: prompt.sourceImageId,
+        vgImageId: prompt.vgImageId,
+        imageUrl: prompt.imageUrl,
         researcherName: "",
         participantId: "",
         dialect: "",
@@ -947,7 +962,7 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
     return recordRows.filter((response) => {
       const researcher = response.researcherName || response.participantId || "";
       return (
-        matchesText(response, filters.search, ["description", "fileName", "researcherName", "participantId", "dialect", "translation"]) &&
+        matchesText(response, filters.search, ["description", "fileName", "vgImageId", "imageUrl", "researcherName", "participantId", "dialect", "translation"]) &&
         (filters.dialect === "all" || response.dialect === filters.dialect) &&
         (filters.researcher === "all" || researcher === filters.researcher)
       );
@@ -955,7 +970,7 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
   }, [filters, recordRows]);
   const sortedRecords = useMemo(() => {
     return sortedRows(filteredRecords, sort, (response, key) => {
-      if (key === "fileName") return response.fileName || response.sourceImageId || "";
+      if (key === "fileName") return response.fileName || response.vgImageId || response.imageUrl || "";
       if (key === "researcherName") return response.researcherName || response.participantId || "";
       return response[key] || "";
     });
@@ -968,7 +983,21 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
   };
 
   const reset = () => {
-    setForm({ fileName: "", description: "" });
+    setForm({
+      fileName: "",
+      vgImageId: "",
+      imageUrl: "",
+      imageWidth: "",
+      imageHeight: "",
+      cocoId: "",
+      flickrId: "",
+      vgRegionId: "",
+      regionX: "",
+      regionY: "",
+      regionWidth: "",
+      regionHeight: "",
+      description: "",
+    });
   };
 
   const save = async (event) => {
@@ -993,17 +1022,61 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
       />
       {error && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{error}</p>}
 
-      <form onSubmit={save} className="grid gap-3 md:grid-cols-2">
+      <form onSubmit={save} className="grid gap-3 md:grid-cols-4">
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>VG image id</span>
+          <input className="input-field" type="number" min="1" value={form.vgImageId} onChange={(event) => setForm({ ...form, vgImageId: event.target.value })} placeholder="1" />
+        </label>
         <label className="space-y-1 text-xs text-neutral-400">
           <span>Image/file reference</span>
           <input className="input-field" value={form.fileName} onChange={(event) => setForm({ ...form, fileName: event.target.value })} placeholder="image_123.jpg or internal file name" />
         </label>
         <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
+          <span>Image URL</span>
+          <input className="input-field" type="url" value={form.imageUrl} onChange={(event) => setForm({ ...form, imageUrl: event.target.value })} placeholder="https://..." />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Image width</span>
+          <input className="input-field" type="number" min="1" value={form.imageWidth} onChange={(event) => setForm({ ...form, imageWidth: event.target.value })} placeholder="800" />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Image height</span>
+          <input className="input-field" type="number" min="1" value={form.imageHeight} onChange={(event) => setForm({ ...form, imageHeight: event.target.value })} placeholder="600" />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>COCO id</span>
+          <input className="input-field" type="number" min="1" value={form.cocoId} onChange={(event) => setForm({ ...form, cocoId: event.target.value })} />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Flickr id</span>
+          <input className="input-field" type="number" min="1" value={form.flickrId} onChange={(event) => setForm({ ...form, flickrId: event.target.value })} />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>VG region id</span>
+          <input className="input-field" type="number" min="1" required value={form.vgRegionId} onChange={(event) => setForm({ ...form, vgRegionId: event.target.value })} placeholder="1382" />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Region x</span>
+          <input className="input-field" type="number" min="0" value={form.regionX} onChange={(event) => setForm({ ...form, regionX: event.target.value })} placeholder="421" />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Region y</span>
+          <input className="input-field" type="number" min="0" value={form.regionY} onChange={(event) => setForm({ ...form, regionY: event.target.value })} placeholder="57" />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Region width</span>
+          <input className="input-field" type="number" min="1" value={form.regionWidth} onChange={(event) => setForm({ ...form, regionWidth: event.target.value })} placeholder="82" />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Region height</span>
+          <input className="input-field" type="number" min="1" value={form.regionHeight} onChange={(event) => setForm({ ...form, regionHeight: event.target.value })} placeholder="139" />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400 md:col-span-4">
           <span>Description shown to RA</span>
           <textarea className="input-field min-h-20" required value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Woman with elephant" />
         </label>
-        <div className="flex gap-2 md:col-span-2">
-          <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" disabled={!form.description || !form.fileName}>
+        <div className="flex gap-2 md:col-span-4">
+          <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" disabled={!form.description || !form.vgRegionId || (!form.fileName && !form.vgImageId && !form.imageUrl)}>
             Add RA Prompt
           </button>
         </div>
@@ -1039,7 +1112,7 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
         <Table
           columns={[
             { key: "description", label: "Description", sortable: true, render: (response) => <span className="block max-w-xs">{response.description}</span> },
-            { key: "fileName", label: "Image/file reference", sortable: true, render: (response) => response.fileName || response.sourceImageId || "-" },
+            { key: "fileName", label: "Image/file reference", sortable: true, render: (response) => response.fileName || response.vgImageId || response.imageUrl || "-" },
             { key: "researcherName", label: "Researcher", sortable: true, render: (response) => response.researcherName || response.participantId || "-" },
             { key: "dialect", label: "Dialect", sortable: true, render: (response) => dialectLabel(response.dialect) },
             { key: "translation", label: "Translation", sortable: true, render: (response) => <span className="block max-w-md">{response.translation || "-"}</span> },

@@ -444,12 +444,30 @@ function promptToClient(row) {
 }
 
 function visualGenomePromptToClient(row) {
+  const region = Array.isArray(row.visual_genome_regions)
+    ? row.visual_genome_regions[0]
+    : row.visual_genome_regions || {};
+  const image = Array.isArray(region.visual_genome_images)
+    ? region.visual_genome_images[0]
+    : region.visual_genome_images || {};
+
   return {
     id: row.id,
     descriptionId: row.description_id,
-    imageId: row.image_id,
-    fileName: row.file_name || "",
-    sourceImageId: row.source_image_id || "",
+    regionId: row.region_id,
+    imageId: region.image_id,
+    fileName: image.file_name || row.file_name || "",
+    vgImageId: image.vg_image_id || row.vg_image_id || "",
+    imageUrl: image.image_url || "",
+    imageWidth: image.width || "",
+    imageHeight: image.height || "",
+    cocoId: image.coco_id || "",
+    flickrId: image.flickr_id || "",
+    vgRegionId: region.vg_region_id || row.vg_region_id || "",
+    regionX: region.x ?? "",
+    regionY: region.y ?? "",
+    regionWidth: region.width ?? "",
+    regionHeight: region.height ?? "",
     description: row.description || "",
     notes: row.notes || "",
     active: row.active !== false,
@@ -463,9 +481,12 @@ function visualGenomeResponseToClient(row) {
   const description = Array.isArray(row.visual_genome_descriptions)
     ? row.visual_genome_descriptions[0]
     : row.visual_genome_descriptions || {};
-  const image = Array.isArray(description.visual_genome_images)
-    ? description.visual_genome_images[0]
-    : description.visual_genome_images || {};
+  const region = Array.isArray(description.visual_genome_regions)
+    ? description.visual_genome_regions[0]
+    : description.visual_genome_regions || {};
+  const image = Array.isArray(region.visual_genome_images)
+    ? region.visual_genome_images[0]
+    : region.visual_genome_images || {};
   const researcher = Array.isArray(row.app_users)
     ? row.app_users[0]
     : row.app_users || {};
@@ -480,7 +501,13 @@ function visualGenomeResponseToClient(row) {
     description: description.description || "",
     descriptionActive: description.active !== false,
     fileName: image.file_name || "",
-    sourceImageId: image.source_image_id || "",
+    vgImageId: image.vg_image_id || "",
+    imageUrl: image.image_url || "",
+    vgRegionId: region.vg_region_id || "",
+    regionX: region.x ?? "",
+    regionY: region.y ?? "",
+    regionWidth: region.width ?? "",
+    regionHeight: region.height ?? "",
     translation: row.translation || "",
     notes: row.notes || "",
     status: row.status || "submitted",
@@ -509,13 +536,47 @@ function researcherVisualGenomePromptToClient(row, response = null) {
 
 function visualGenomePayload(body, admin) {
   const fileName = cleanText(body.fileName || body.file_name || body.imageKey || body.imageReference);
-  const sourceImageId = cleanText(body.sourceImageId || body.source_image_id);
+  const vgImageId = cleanText(body.vgImageId || body.vg_image_id || body.imageId || body.image_id)
+    ? cleanInteger(body.vgImageId || body.vg_image_id || body.imageId || body.image_id, null, 1)
+    : null;
+  const imageUrl = cleanText(body.imageUrl || body.image_url || body.url);
+  const imageWidth = cleanText(body.imageWidth || body.image_width || body.width)
+    ? cleanInteger(body.imageWidth || body.image_width || body.width, null, 1)
+    : null;
+  const imageHeight = cleanText(body.imageHeight || body.image_height || body.height)
+    ? cleanInteger(body.imageHeight || body.image_height || body.height, null, 1)
+    : null;
+  const cocoId = cleanText(body.cocoId || body.coco_id)
+    ? cleanInteger(body.cocoId || body.coco_id, null, 1)
+    : null;
+  const flickrId = cleanText(body.flickrId || body.flickr_id)
+    ? cleanInteger(body.flickrId || body.flickr_id, null, 1)
+    : null;
+  const vgRegionId = cleanText(body.vgRegionId || body.vg_region_id || body.regionId || body.region_id)
+    ? cleanInteger(body.vgRegionId || body.vg_region_id || body.regionId || body.region_id, null, 1)
+    : null;
+  const regionX = cleanText(body.regionX ?? body.x) ? cleanInteger(body.regionX ?? body.x, null, 0) : null;
+  const regionY = cleanText(body.regionY ?? body.y) ? cleanInteger(body.regionY ?? body.y, null, 0) : null;
+  const regionWidth = cleanText(body.regionWidth || body.region_width) ? cleanInteger(body.regionWidth || body.region_width, null, 1) : null;
+  const regionHeight = cleanText(body.regionHeight || body.region_height) ? cleanInteger(body.regionHeight || body.region_height, null, 1) : null;
   const description = cleanText(body.description);
 
   return {
     image: {
       ...(fileName !== undefined ? { file_name: fileName } : {}),
-      ...(sourceImageId !== undefined ? { source_image_id: sourceImageId } : {}),
+      ...(vgImageId !== null ? { vg_image_id: vgImageId } : {}),
+      ...(imageUrl !== undefined ? { image_url: imageUrl } : {}),
+      ...(imageWidth !== null ? { width: imageWidth } : {}),
+      ...(imageHeight !== null ? { height: imageHeight } : {}),
+      ...(cocoId !== null ? { coco_id: cocoId } : {}),
+      ...(flickrId !== null ? { flickr_id: flickrId } : {}),
+    },
+    region: {
+      ...(vgRegionId !== null ? { vg_region_id: vgRegionId } : {}),
+      ...(regionX !== null ? { x: regionX } : {}),
+      ...(regionY !== null ? { y: regionY } : {}),
+      ...(regionWidth !== null ? { width: regionWidth } : {}),
+      ...(regionHeight !== null ? { height: regionHeight } : {}),
     },
     description: {
       ...(description !== undefined ? { description } : {}),
@@ -529,18 +590,19 @@ function visualGenomePayload(body, admin) {
 
 async function findOrCreateVisualGenomeImage(imagePayload) {
   const fileName = cleanText(imagePayload.file_name);
-  const sourceImageId = cleanText(imagePayload.source_image_id);
+  const vgImageId = imagePayload.vg_image_id || null;
+  const imageUrl = cleanText(imagePayload.image_url);
 
-  if (!fileName && !sourceImageId) {
-    throw new Error("Image/file reference is required.");
+  if (!fileName && !vgImageId && !imageUrl) {
+    throw new Error("Image reference, VG image ID, or image URL is required.");
   }
 
   let existing = null;
-  if (sourceImageId) {
+  if (vgImageId) {
     const { data, error } = await supabase
       .from("visual_genome_images")
       .select("*")
-      .eq("source_image_id", sourceImageId)
+      .eq("vg_image_id", vgImageId)
       .maybeSingle();
 
     if (error) throw error;
@@ -558,10 +620,26 @@ async function findOrCreateVisualGenomeImage(imagePayload) {
     existing = data;
   }
 
+  if (!existing && imageUrl) {
+    const { data, error } = await supabase
+      .from("visual_genome_images")
+      .select("*")
+      .eq("image_url", imageUrl)
+      .maybeSingle();
+
+    if (error) throw error;
+    existing = data;
+  }
+
   if (existing) {
     const updatePayload = {};
     if (fileName && existing.file_name !== fileName) updatePayload.file_name = fileName;
-    if (sourceImageId && existing.source_image_id !== sourceImageId) updatePayload.source_image_id = sourceImageId;
+    if (vgImageId && existing.vg_image_id !== vgImageId) updatePayload.vg_image_id = vgImageId;
+    ["image_url", "width", "height", "coco_id", "flickr_id"].forEach((key) => {
+      if (imagePayload[key] !== undefined && imagePayload[key] !== null && existing[key] !== imagePayload[key]) {
+        updatePayload[key] = imagePayload[key];
+      }
+    });
 
     if (Object.keys(updatePayload).length) {
       const { data, error } = await supabase
@@ -582,7 +660,69 @@ async function findOrCreateVisualGenomeImage(imagePayload) {
     .from("visual_genome_images")
     .insert({
       file_name: fileName,
-      source_image_id: sourceImageId,
+      vg_image_id: vgImageId,
+      image_url: imageUrl,
+      width: imagePayload.width || null,
+      height: imagePayload.height || null,
+      coco_id: imagePayload.coco_id || null,
+      flickr_id: imagePayload.flickr_id || null,
+    })
+    .select("*")
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function findOrCreateVisualGenomeRegion(imageId, regionPayload) {
+  const vgRegionId = regionPayload.vg_region_id || null;
+  if (!imageId || !vgRegionId) {
+    throw new Error("VG image ID and region ID are required.");
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("visual_genome_regions")
+    .select("*")
+    .eq("image_id", imageId)
+    .eq("vg_region_id", vgRegionId)
+    .maybeSingle();
+
+  if (existingError) throw existingError;
+
+  const regionValues = {
+    x: regionPayload.x ?? null,
+    y: regionPayload.y ?? null,
+    width: regionPayload.width ?? null,
+    height: regionPayload.height ?? null,
+  };
+
+  if (existing) {
+    const updatePayload = {};
+    Object.entries(regionValues).forEach(([key, value]) => {
+      if (value !== null && existing[key] !== value) updatePayload[key] = value;
+    });
+
+    if (Object.keys(updatePayload).length) {
+      const { data, error } = await supabase
+        .from("visual_genome_regions")
+        .update(updatePayload)
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    return existing;
+  }
+
+  const { data, error } = await supabase
+    .from("visual_genome_regions")
+    .insert({
+      image_id: imageId,
+      vg_region_id: vgRegionId,
+      ...regionValues,
     })
     .select("*")
     .single();
@@ -2501,22 +2641,30 @@ router.get("/admin/visual-genome-prompts", requireAdmin, async (req, res) => {
     const rows = await fetchAllRows(() =>
       supabase
         .from("visual_genome_descriptions")
-        .select("id, image_id, description, notes, active, created_by, created_at, updated_at, visual_genome_images(file_name, source_image_id)")
+        .select(`
+          id,
+          region_id,
+          description,
+          notes,
+          active,
+          created_by,
+          created_at,
+          updated_at,
+          visual_genome_regions(
+            image_id,
+            vg_region_id,
+            x,
+            y,
+            width,
+            height,
+            visual_genome_images(file_name, vg_image_id, image_url, width, height, coco_id, flickr_id)
+          )
+        `)
         .order("created_at", { ascending: false })
     );
 
     res.json({
-      prompts: rows.map((row) => {
-        const image = Array.isArray(row.visual_genome_images)
-          ? row.visual_genome_images[0]
-          : row.visual_genome_images || {};
-        return visualGenomePromptToClient({
-          ...row,
-          description_id: row.id,
-          file_name: image.file_name,
-          source_image_id: image.source_image_id,
-        });
-      }),
+      prompts: rows.map((row) => visualGenomePromptToClient({ ...row, description_id: row.id })),
     });
   } catch (error) {
     console.error("Admin VisualGenomeDB prompts failed:", error.message);
@@ -2544,7 +2692,14 @@ router.get("/admin/visual-genome-responses", requireAdmin, async (req, res) => {
           visual_genome_descriptions(
             description,
             active,
-            visual_genome_images(file_name, source_image_id)
+            visual_genome_regions(
+              vg_region_id,
+              x,
+              y,
+              width,
+              height,
+              visual_genome_images(file_name, vg_image_id, image_url, width, height, coco_id, flickr_id)
+            )
           )
         `)
         .order("updated_at", { ascending: false })
@@ -2563,20 +2718,24 @@ router.post("/admin/visual-genome-prompts", requireAdmin, async (req, res) => {
 
     const payload = visualGenomePayload(req.body, req.admin);
 
-    if (!payload.image.file_name && !payload.image.source_image_id) {
-      return res.status(400).json({ error: "Image/file reference is required." });
+    if (!payload.image.file_name && !payload.image.vg_image_id && !payload.image.image_url) {
+      return res.status(400).json({ error: "Image reference, VG image ID, or image URL is required." });
+    }
+    if (!payload.region.vg_region_id) {
+      return res.status(400).json({ error: "VG region ID is required." });
     }
     if (!payload.description.description) {
       return res.status(400).json({ error: "Description text is required." });
     }
 
     const image = await findOrCreateVisualGenomeImage(payload.image);
+    const region = await findOrCreateVisualGenomeRegion(image.id, payload.region);
 
     const { data, error } = await supabase
       .from("visual_genome_descriptions")
       .insert({
         ...payload.description,
-        image_id: image.id,
+        region_id: region.id,
       })
       .select("*")
       .single();
@@ -2588,14 +2747,16 @@ router.post("/admin/visual-genome-prompts", requireAdmin, async (req, res) => {
       prompt: visualGenomePromptToClient({
         ...data,
         description_id: data.id,
-        file_name: image.file_name,
-        source_image_id: image.source_image_id,
+        visual_genome_regions: {
+          ...region,
+          visual_genome_images: image,
+        },
       }),
     });
   } catch (error) {
     console.error("Admin VisualGenomeDB prompt create failed:", error.message);
     if (error.code === "23505") {
-      return res.status(409).json({ error: "That VisualGenomeDB description already exists for this image." });
+      return res.status(409).json({ error: "That VisualGenomeDB description already exists for this region." });
     }
     res.status(500).json({ error: "Unable to create VisualGenomeDB prompt." });
   }
@@ -2609,7 +2770,7 @@ router.patch("/admin/visual-genome-prompts/:id", requireAdmin, async (req, res) 
 
     const { data: existing, error: existingError } = await supabase
       .from("visual_genome_descriptions")
-      .select("id, image_id")
+      .select("id, region_id")
       .eq("id", req.params.id)
       .maybeSingle();
 
@@ -2617,9 +2778,13 @@ router.patch("/admin/visual-genome-prompts/:id", requireAdmin, async (req, res) 
     if (!existing) return res.status(404).json({ error: "VisualGenomeDB prompt not found." });
 
     let image = null;
-    if (payload.image.file_name || payload.image.source_image_id) {
+    let region = null;
+    if (payload.image.file_name || payload.image.vg_image_id || payload.image.image_url) {
       image = await findOrCreateVisualGenomeImage(payload.image);
-      payload.description.image_id = image.id;
+      if (payload.region.vg_region_id) {
+        region = await findOrCreateVisualGenomeRegion(image.id, payload.region);
+        payload.description.region_id = region.id;
+      }
     }
 
     const { data, error } = await supabase
@@ -2632,15 +2797,18 @@ router.patch("/admin/visual-genome-prompts/:id", requireAdmin, async (req, res) 
     if (error) throw error;
     if (!data) return res.status(404).json({ error: "VisualGenomeDB prompt not found." });
 
-    if (!image) {
-      const { data: existingImage, error: imageError } = await supabase
-        .from("visual_genome_images")
-        .select("*")
-        .eq("id", data.image_id || existing.image_id)
+    if (!region) {
+      const { data: existingRegion, error: regionError } = await supabase
+        .from("visual_genome_regions")
+        .select("*, visual_genome_images(*)")
+        .eq("id", data.region_id || existing.region_id)
         .maybeSingle();
 
-      if (imageError) throw imageError;
-      image = existingImage || {};
+      if (regionError) throw regionError;
+      region = existingRegion || {};
+      image = Array.isArray(region.visual_genome_images)
+        ? region.visual_genome_images[0]
+        : region.visual_genome_images || {};
     }
 
     await writeActivity(req.admin, "update_visual_genome_prompt", "visual_genome_description", req.params.id);
@@ -2648,8 +2816,10 @@ router.patch("/admin/visual-genome-prompts/:id", requireAdmin, async (req, res) 
       prompt: visualGenomePromptToClient({
         ...data,
         description_id: data.id,
-        file_name: image.file_name,
-        source_image_id: image.source_image_id,
+        visual_genome_regions: {
+          ...region,
+          visual_genome_images: image,
+        },
       }),
     });
   } catch (error) {

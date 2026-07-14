@@ -36,25 +36,45 @@ alter table public.contributions enable row level security;
 create table if not exists public.visual_genome_images (
   id uuid primary key default gen_random_uuid(),
   file_name text,
-  source_image_id text,
+  vg_image_id bigint,
+  image_url text,
+  width integer,
+  height integer,
+  coco_id bigint,
+  flickr_id bigint,
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  check (file_name is not null or source_image_id is not null),
+  check (file_name is not null or vg_image_id is not null or image_url is not null),
   unique (file_name),
-  unique (source_image_id)
+  unique (vg_image_id),
+  unique (image_url)
+);
+
+create table if not exists public.visual_genome_regions (
+  id uuid primary key default gen_random_uuid(),
+  image_id uuid not null references public.visual_genome_images(id) on delete cascade,
+  vg_region_id bigint not null,
+  x integer,
+  y integer,
+  width integer,
+  height integer,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (image_id, vg_region_id)
 );
 
 create table if not exists public.visual_genome_descriptions (
   id uuid primary key default gen_random_uuid(),
-  image_id uuid not null references public.visual_genome_images(id) on delete cascade,
+  region_id uuid not null references public.visual_genome_regions(id) on delete cascade,
   description text not null,
   notes text,
   active boolean not null default true,
   created_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (image_id, description)
+  unique (region_id, description)
 );
 
 create table if not exists public.visual_genome_translations (
@@ -118,13 +138,22 @@ create unique index if not exists research_tasks_one_open_assignee_recording_uid
 on public.research_tasks (recording_id, assigned_to)
 where recording_id is not null and assigned_to is not null and status <> 'done';
 
-create index if not exists visual_genome_images_source_id_idx
-on public.visual_genome_images (source_image_id);
+create index if not exists visual_genome_images_vg_image_id_idx
+on public.visual_genome_images (vg_image_id);
 create index if not exists visual_genome_images_file_name_idx
 on public.visual_genome_images (file_name);
 
-create index if not exists visual_genome_descriptions_image_idx
-on public.visual_genome_descriptions (image_id);
+create index if not exists visual_genome_images_image_url_idx
+on public.visual_genome_images (image_url);
+
+create index if not exists visual_genome_regions_image_idx
+on public.visual_genome_regions (image_id);
+
+create index if not exists visual_genome_regions_vg_region_id_idx
+on public.visual_genome_regions (vg_region_id);
+
+create index if not exists visual_genome_descriptions_region_idx
+on public.visual_genome_descriptions (region_id);
 
 create index if not exists visual_genome_descriptions_active_idx
 on public.visual_genome_descriptions (active);
@@ -237,6 +266,22 @@ begin
   if not exists (
     select 1
     from pg_trigger
+    where tgname = 'visual_genome_regions_set_updated_at'
+      and tgrelid = 'public.visual_genome_regions'::regclass
+  ) then
+    create trigger visual_genome_regions_set_updated_at
+    before update on public.visual_genome_regions
+    for each row
+    execute function public.set_updated_at();
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_trigger
     where tgname = 'visual_genome_descriptions_set_updated_at'
       and tgrelid = 'public.visual_genome_descriptions'::regclass
   ) then
@@ -265,6 +310,7 @@ end;
 $$;
 
 alter table public.visual_genome_images enable row level security;
+alter table public.visual_genome_regions enable row level security;
 alter table public.visual_genome_descriptions enable row level security;
 alter table public.visual_genome_translations enable row level security;
 
