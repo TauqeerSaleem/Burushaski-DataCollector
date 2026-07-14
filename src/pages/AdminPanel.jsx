@@ -7,6 +7,7 @@ import {
   createAdminAccount,
   createPrompt,
   createResearchTask,
+  createVisualGenomePrompt,
   deactivatePrompt,
   deleteAdminAccount,
   deleteAdminUser,
@@ -19,6 +20,8 @@ import {
   fetchAdminSession,
   fetchAdminUsers,
   fetchResearchTasks,
+  fetchVisualGenomePrompts,
+  fetchVisualGenomeResponses,
   getAdminToken,
   getSavedAdmin,
   updateAdminAccount,
@@ -49,6 +52,15 @@ const dialectOptions = [
 const promptTypeOptions = [
   { value: "translation", label: "Speak an English sentence" },
   { value: "picture_description", label: "Describe an image" },
+];
+
+const researchTaskTypeOptions = [
+  { value: "transcription", label: "Transcription" },
+  { value: "translation", label: "Translation" },
+  { value: "validation", label: "Validation" },
+  { value: "metadata_review", label: "Metadata review" },
+  { value: "folk_tales", label: "Folk Tales" },
+  { value: "sadaf_munshi", label: "Sadaf Munshi" },
 ];
 
 const defaultPromptGroups = [
@@ -273,7 +285,7 @@ function Table({ columns, rows, emptyText = "No data yet.", sort, onSort }) {
   );
 }
 
-function OverviewTab({ overview, prompts }) {
+function OverviewTab({ overview }) {
   const totals = overview?.totals || {};
   const usersByRole = overview?.usersByRole || {};
   const roleRows = participantRoleOptions.map((role) => ({
@@ -296,7 +308,7 @@ function OverviewTab({ overview, prompts }) {
         <Stat label="Content creators" value={usersByRole[USER_ROLES.CONTENT_CONTRIBUTOR] || 0} />
         <Stat label="Recordings" value={totals.recordings || 0} />
         <Stat label="Validations" value={totals.validations || 0} />
-        <Stat label="Active prompts" value={(prompts || []).filter((prompt) => prompt.active).length} />
+        <Stat label="Active prompts" value={totals.prompts || 0} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -376,8 +388,8 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
   const promptStats = useMemo(
     () => ({
       active: prompts.filter((prompt) => prompt.active).length,
-      image: prompts.filter((prompt) => prompt.mediaType === "image" || prompt.promptType === "picture_description").length,
-      dialects: uniq(prompts.map((prompt) => prompt.dialect)).length,
+      image: prompts.filter((prompt) => prompt.active && (prompt.mediaType === "image" || prompt.promptType === "picture_description")).length,
+      dialects: uniq(prompts.filter((prompt) => prompt.active).map((prompt) => prompt.dialect)).length,
     }),
     [prompts]
   );
@@ -902,20 +914,175 @@ function PromptsTab({ prompts, onRefresh, onAuthError }) {
   );
 }
 
-function ResearchTasksTab({ tasks, users, onRefresh, onOpenRecords, onApply, onComplete }) {
-  const researchers = users.filter((user) => user.role === USER_ROLES.RESEARCHER && user.active !== false);
-  const [form, setForm] = useState(emptyTask);
-  const [editingId, setEditingId] = useState(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [filters, setFilters] = useState({ search: "", assignedTo: "all", status: "all", type: "all" });
+function VisualGenomeBank({ prompts, responses, onRefresh }) {
+  const [form, setForm] = useState({ fileName: "", description: "" });
+  const [filters, setFilters] = useState({ search: "", dialect: "all", researcher: "all" });
+  const [sort, setSort] = useState({ key: "description", direction: "asc" });
   const [error, setError] = useState("");
+
+  const activePrompts = useMemo(() => prompts.filter((prompt) => prompt.active), [prompts]);
+  const recordRows = useMemo(() => {
+    const activePromptIds = new Set(activePrompts.map((prompt) => prompt.id));
+    const activeResponses = (responses || []).filter((response) => response.descriptionActive !== false && activePromptIds.has(response.descriptionId));
+    const responsePromptIds = new Set(activeResponses.map((response) => response.descriptionId));
+    const pendingPromptRows = activePrompts
+      .filter((prompt) => !responsePromptIds.has(prompt.id))
+      .map((prompt) => ({
+        id: `prompt-${prompt.id}`,
+        descriptionId: prompt.id,
+        description: prompt.description,
+        fileName: prompt.fileName,
+        sourceImageId: prompt.sourceImageId,
+        researcherName: "",
+        participantId: "",
+        dialect: "",
+        translation: "",
+      }));
+
+    return [...activeResponses, ...pendingPromptRows];
+  }, [activePrompts, responses]);
+  const researcherOptions = useMemo(() => uniq(recordRows.map((row) => row.researcherName || row.participantId)), [recordRows]);
+  const responseDialects = useMemo(() => uniq(recordRows.map((row) => row.dialect)), [recordRows]);
+  const filteredRecords = useMemo(() => {
+    return recordRows.filter((response) => {
+      const researcher = response.researcherName || response.participantId || "";
+      return (
+        matchesText(response, filters.search, ["description", "fileName", "researcherName", "participantId", "dialect", "translation"]) &&
+        (filters.dialect === "all" || response.dialect === filters.dialect) &&
+        (filters.researcher === "all" || researcher === filters.researcher)
+      );
+    });
+  }, [filters, recordRows]);
+  const sortedRecords = useMemo(() => {
+    return sortedRows(filteredRecords, sort, (response, key) => {
+      if (key === "fileName") return response.fileName || response.sourceImageId || "";
+      if (key === "researcherName") return response.researcherName || response.participantId || "";
+      return response[key] || "";
+    });
+  }, [filteredRecords, sort]);
+  const toggleSort = (key) => {
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const reset = () => {
+    setForm({ fileName: "", description: "" });
+  };
+
+  const save = async (event) => {
+    event.preventDefault();
+    setError("");
+
+    try {
+      await createVisualGenomePrompt(form);
+      reset();
+      await onRefresh();
+    } catch (err) {
+      setError(err.message || "Unable to save Visual Genome prompt.");
+    }
+  };
+
+  return (
+    <section className="space-y-4 rounded-lg border border-neutral-800 bg-neutral-950/70 p-4">
+      <PanelHeader
+        eyebrow="RA prompt bank"
+        title="Image Description Prompts"
+        detail={`${activePrompts.length} active · ${prompts.length - activePrompts.length} inactive`}
+      />
+      {error && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{error}</p>}
+
+      <form onSubmit={save} className="grid gap-3 md:grid-cols-2">
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Image/file reference</span>
+          <input className="input-field" value={form.fileName} onChange={(event) => setForm({ ...form, fileName: event.target.value })} placeholder="image_123.jpg or internal file name" />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
+          <span>Description shown to RA</span>
+          <textarea className="input-field min-h-20" required value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Woman with elephant" />
+        </label>
+        <div className="flex gap-2 md:col-span-2">
+          <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" disabled={!form.description || !form.fileName}>
+            Add RA Prompt
+          </button>
+        </div>
+      </form>
+
+      <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-900/70 p-3 md:grid-cols-4">
+        <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
+          <span>Search records</span>
+          <input className="input-field" placeholder="Description, researcher, dialect, translation..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Researcher</span>
+          <select className="select-field" value={filters.researcher} onChange={(event) => setFilters({ ...filters, researcher: event.target.value })}>
+            <option value="all">All researchers</option>
+            {researcherOptions.map((researcher) => (
+              <option key={researcher} value={researcher}>{researcher}</option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1 text-xs text-neutral-400">
+          <span>Dialect</span>
+          <select className="select-field" value={filters.dialect} onChange={(event) => setFilters({ ...filters, dialect: event.target.value })}>
+            <option value="all">All dialects</option>
+            {responseDialects.map((dialect) => (
+              <option key={dialect} value={dialect}>{dialectLabel(dialect)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-400">Records</h3>
+        <Table
+          columns={[
+            { key: "description", label: "Description", sortable: true, render: (response) => <span className="block max-w-xs">{response.description}</span> },
+            { key: "fileName", label: "Image/file reference", sortable: true, render: (response) => response.fileName || response.sourceImageId || "-" },
+            { key: "researcherName", label: "Researcher", sortable: true, render: (response) => response.researcherName || response.participantId || "-" },
+            { key: "dialect", label: "Dialect", sortable: true, render: (response) => dialectLabel(response.dialect) },
+            { key: "translation", label: "Translation", sortable: true, render: (response) => <span className="block max-w-md">{response.translation || "-"}</span> },
+          ]}
+          rows={sortedRecords}
+          emptyText="No Visual Genome records match these filters."
+          sort={sort}
+          onSort={toggleSort}
+        />
+      </div>
+    </section>
+  );
+}
+
+function outputsForResearchTaskType(taskType) {
+  if (taskType === "transcription") return ["transcript"];
+  if (taskType === "metadata_review") return ["metadata_review"];
+  if (taskType === "validation") return ["validation"];
+  return ["translation"];
+}
+
+function ResearcherWorkflowTab({ tasks, users, visualGenomePrompts, visualGenomeResponses, onRefresh, onOpenRecords, onApply, onComplete }) {
+  const researchers = users.filter((user) => user.role === USER_ROLES.RESEARCHER && user.active !== false);
+  const activeResearcherIds = useMemo(() => new Set(researchers.map((user) => user.id)), [researchers]);
+  const activeAssigneeTasks = useMemo(
+    () => tasks.filter((task) => !task.assignedTo || activeResearcherIds.has(task.assignedTo)),
+    [activeResearcherIds, tasks]
+  );
+  const [view, setView] = useState("assign-recording");
+  const [form, setForm] = useState({ ...emptyTask, sourceType: "text", status: "todo" });
+  const [editingId, setEditingId] = useState(null);
+  const [filters, setFilters] = useState({ search: "", assignedTo: "all", status: "all", type: "all" });
+  const [taskSort, setTaskSort] = useState({ key: "title", direction: "asc" });
+  const [error, setError] = useState("");
+  const assigneeName = useCallback((id) => users.find((user) => user.id === id)?.username || "-", [users]);
+  const taskTypeLabel = useCallback((value) => researchTaskTypeOptions.find((option) => option.value === value)?.label || value, []);
 
   const filteredTasks = useMemo(
     () =>
       tasks.filter((task) => {
         const assignee = task.assignedTo || "unassigned";
         return (
-          matchesText(task, filters.search, ["title", "taskType", "sourceRef", "sourceText", "instructions", "transcript", "translation", "notes"]) &&
+          matchesText(task, filters.search, ["title", "taskType", "sourceText", "instructions", "transcript", "translation"]) &&
           (filters.assignedTo === "all" || assignee === filters.assignedTo) &&
           (filters.status === "all" || task.status === filters.status) &&
           (filters.type === "all" || task.taskType === filters.type)
@@ -923,21 +1090,53 @@ function ResearchTasksTab({ tasks, users, onRefresh, onOpenRecords, onApply, onC
       }),
     [filters, tasks]
   );
+  const sortedTasks = useMemo(
+    () => sortedRows(filteredTasks, taskSort, (task, key) => {
+      if (key === "assignedTo") return assigneeName(task.assignedTo);
+      if (key === "taskType") return taskTypeLabel(task.taskType);
+      return task[key] || "";
+    }),
+    [assigneeName, filteredTasks, taskSort, taskTypeLabel]
+  );
+
+  const statusLabel = (status) => ({
+    todo: "To do",
+    in_progress: "In progress",
+    review: "Awaiting review",
+    done: "Completed",
+    blocked: "Needs changes",
+  }[status] || status);
+  const resetForm = () => {
+    setForm({ ...emptyTask, sourceType: "text", status: "todo" });
+    setEditingId(null);
+  };
 
   const save = async (event) => {
     event.preventDefault();
     setError("");
 
+    const taskType = form.taskType || "translation";
+    const payload = {
+      title: form.title || taskTypeLabel(taskType),
+      taskType,
+      assignedTo: form.assignedTo,
+      requestedOutputs: outputsForResearchTaskType(taskType),
+      sourceType: "text",
+      sourceText: form.sourceText,
+      instructions: form.instructions,
+      status: editingId ? form.status || "todo" : "todo",
+      priority: form.priority || "normal",
+      dueDate: form.dueDate,
+      adminFeedback: form.adminFeedback,
+    };
+
     try {
       if (editingId) {
-        await updateResearchTask(editingId, form);
+        await updateResearchTask(editingId, payload);
       } else {
-        await createResearchTask(form);
+        await createResearchTask(payload);
       }
-
-      setForm(emptyTask);
-      setEditingId(null);
-      setShowAdvanced(false);
+      resetForm();
       await onRefresh();
     } catch (err) {
       setError(err.message || "Unable to save research task.");
@@ -946,255 +1145,211 @@ function ResearchTasksTab({ tasks, users, onRefresh, onOpenRecords, onApply, onC
 
   const edit = (task) => {
     setEditingId(task.id);
-    setForm({ ...emptyTask, ...task });
-    setShowAdvanced(true);
+    setForm({ ...emptyTask, ...task, sourceType: "text" });
+    setView("other-tasks");
     setError("");
   };
-
-  const assigneeName = (id) => users.find((user) => user.id === id)?.username || "-";
-  const statusLabel = (status) => ({
-    todo: "To do",
-    in_progress: "In progress",
-    review: "Awaiting review",
-    done: "Completed",
-    blocked: "Needs changes",
-  }[status] || status);
+  const toggleTaskSort = (key) => {
+    setTaskSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  };
 
   return (
     <div className="space-y-6">
       <PanelHeader
         eyebrow="Research workflow"
         title="Assignments"
-        detail={`${tasks.length} total · ${tasks.filter((task) => task.status !== "done").length} open`}
+        detail={`${activeAssigneeTasks.length} active-assignee tasks · ${activeAssigneeTasks.filter((task) => task.status !== "done").length} open`}
       />
-
       {error && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{error}</p>}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <Stat label="Unassigned" value={tasks.filter((task) => !task.assignedTo).length} />
-        <Stat label="To do" value={tasks.filter((task) => task.status === "todo").length} />
-        <Stat label="In progress" value={tasks.filter((task) => task.status === "in_progress").length} />
-        <Stat label="Awaiting review" value={tasks.filter((task) => task.status === "review").length} />
-        <Stat label="Completed" value={tasks.filter((task) => task.status === "done").length} />
+        <Stat label="Unassigned" value={activeAssigneeTasks.filter((task) => !task.assignedTo).length} />
+        <Stat label="To do" value={activeAssigneeTasks.filter((task) => task.status === "todo").length} />
+        <Stat label="In progress" value={activeAssigneeTasks.filter((task) => task.status === "in_progress").length} />
+        <Stat label="Awaiting review" value={activeAssigneeTasks.filter((task) => task.status === "review").length} />
+        <Stat label="Completed" value={activeAssigneeTasks.filter((task) => task.status === "done").length} />
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" onClick={onOpenRecords}>
-          Assign a recording
-        </button>
-        <button
-          type="button"
-          className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700"
-          onClick={() => {
-            setShowAdvanced((current) => !current);
-            setEditingId(null);
-            setForm(emptyTask);
-          }}
-        >
-          {showAdvanced ? "Hide manual task form" : "Create non-recording task"}
-        </button>
-      </div>
-
-      {showAdvanced && (
-      <form autoComplete="off" onSubmit={save} className="rounded-lg border border-neutral-800 bg-neutral-900/80 p-4 space-y-4">
-        {form.recording && (
-          <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-4">
-            <div>
-              <p className="text-sm font-medium text-white">
-                {form.recording.username || form.recording.participantId}
-              </p>
-              <p className="text-xs text-neutral-500">
-                {form.recording.moduleTitle} · Recording #{form.recording.id}
-              </p>
-            </div>
-            <p className="text-sm text-neutral-300">{form.recording.promptText || "Prompt text unavailable"}</p>
-            {form.recording.audioUrl && <audio className="w-full" controls src={form.recording.audioUrl} />}
-          </div>
-        )}
-        <div className="grid gap-3 md:grid-cols-4">
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Task title</span>
-            <input className="input-field" name="task-title" autoComplete="off" placeholder="Short assignment name" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Task type</span>
-            <select className="select-field" value={form.taskType} onChange={(event) => setForm({ ...form, taskType: event.target.value })}>
-              <option value="transcription">Transcription</option>
-              <option value="translation">Translation</option>
-              <option value="validation">Validation</option>
-              <option value="metadata_review">Metadata review</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Assigned to</span>
-            <select className="select-field" value={form.assignedTo} onChange={(event) => setForm({ ...form, assignedTo: event.target.value })}>
-              <option value="">Unassigned</option>
-              {researchers.map((user) => (
-                <option key={user.id} value={user.id}>{user.username}</option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Status</span>
-            <select className="select-field" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
-              <option value="todo">To do</option>
-              <option value="in_progress">In progress</option>
-              <option value="review">Review</option>
-              <option value="done">Done</option>
-              <option value="blocked">Blocked</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-4">
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Source type</span>
-            <select className="select-field" value={form.sourceType} onChange={(event) => setForm({ ...form, sourceType: event.target.value })}>
-              <option value="audio">Audio</option>
-              <option value="text">Text</option>
-              <option value="content_url">Content URL</option>
-              <option value="recording">Recording row</option>
-              <option value="feedback">Feedback row</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Source reference</span>
-            <input className="input-field" name="source-ref" autoComplete="off" placeholder="URL, storage path, or row ID" value={form.sourceRef} onChange={(event) => setForm({ ...form, sourceRef: event.target.value })} />
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Priority</span>
-            <select className="select-field" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })}>
-              <option value="low">Low</option>
-              <option value="normal">Normal</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Due date</span>
-            <input className="input-field" name="due-date" type="date" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} />
-          </label>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Source text</span>
-            <textarea className="input-field min-h-24" name="source-text" autoComplete="off" placeholder="Text to translate/transcribe, if applicable" value={form.sourceText} onChange={(event) => setForm({ ...form, sourceText: event.target.value })} />
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Researcher instructions</span>
-            <textarea className="input-field min-h-24" name="instructions" autoComplete="off" placeholder="What should the researcher do?" value={form.instructions} onChange={(event) => setForm({ ...form, instructions: event.target.value })} />
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>Transcript</span>
-            <textarea className="input-field min-h-24" name="transcript" autoComplete="off" placeholder="Burushaski transcript or working notes" value={form.transcript} onChange={(event) => setForm({ ...form, transcript: event.target.value })} />
-          </label>
-          <label className="space-y-1 text-xs text-neutral-400">
-            <span>English translation</span>
-            <textarea className="input-field min-h-24" name="translation" autoComplete="off" placeholder="English translation" value={form.translation} onChange={(event) => setForm({ ...form, translation: event.target.value })} />
-          </label>
-        </div>
-
-        <label className="block space-y-1 text-xs text-neutral-400">
-          <span>Internal notes</span>
-          <textarea className="input-field min-h-20" name="notes" autoComplete="off" placeholder="Admin-only notes" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
-        </label>
-        {editingId && (
-          <label className="block space-y-1 text-xs text-neutral-400">
-            <span>Feedback visible to researcher</span>
-            <textarea className="input-field min-h-20" value={form.adminFeedback} onChange={(event) => setForm({ ...form, adminFeedback: event.target.value })} placeholder="Explain requested changes or review outcome" />
-          </label>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" disabled={!form.title}>
-            {editingId ? "Save Task" : "Create Task"}
+      <div className="flex flex-wrap gap-2 border-b border-neutral-800 pb-3">
+        {[
+          ["assign-recording", "Assign Recording"],
+          ["visual-genome", "Visual Genome Task"],
+          ["other-tasks", "Other Tasks"],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`rounded px-4 py-2 text-sm font-semibold ${view === id ? "bg-yellow-400 text-black" : "bg-neutral-800 text-white hover:bg-neutral-700"}`}
+            onClick={() => setView(id)}
+          >
+            {label}
           </button>
-          {editingId && (
-            <button type="button" className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700" onClick={() => { setEditingId(null); setForm(emptyTask); }}>
-              Cancel
-            </button>
-          )}
-        </div>
-      </form>
+        ))}
+      </div>
+
+      {view === "assign-recording" && (
+        <section className="rounded-lg border border-neutral-800 bg-neutral-950/70 p-4">
+          <PanelHeader eyebrow="Recording assignments" title="Assign Recording" detail="Redirect to Records for assignment" />
+          <button type="button" className="mt-4 rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300" onClick={onOpenRecords}>
+            Open Records
+          </button>
+        </section>
       )}
 
-      <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-5">
-        <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
-          <span>Search assignments</span>
-          <input className="input-field" placeholder="Task, source text, notes..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
-        </label>
-        <label className="space-y-1 text-xs text-neutral-400">
-          <span>Assignee</span>
-          <select className="select-field" value={filters.assignedTo} onChange={(event) => setFilters({ ...filters, assignedTo: event.target.value })}>
-            <option value="all">All assignees</option>
-            <option value="unassigned">Unassigned</option>
-            {researchers.map((user) => (
-              <option key={user.id} value={user.id}>{user.username}</option>
-            ))}
-          </select>
-        </label>
-        <label className="space-y-1 text-xs text-neutral-400">
-          <span>Status</span>
-          <select className="select-field" value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-            <option value="all">All statuses</option>
-            <option value="todo">To do</option>
-            <option value="in_progress">In progress</option>
-            <option value="review">Awaiting review</option>
-            <option value="done">Done</option>
-            <option value="blocked">Needs changes</option>
-          </select>
-        </label>
-        <label className="space-y-1 text-xs text-neutral-400">
-          <span>Task type</span>
-          <select className="select-field" value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}>
-            <option value="all">All task types</option>
-            <option value="transcription">Transcription</option>
-            <option value="translation">Translation</option>
-            <option value="validation">Validation</option>
-            <option value="metadata_review">Metadata review</option>
-          </select>
-        </label>
-      </div>
+      {view === "visual-genome" && (
+        <VisualGenomeBank prompts={visualGenomePrompts || []} responses={visualGenomeResponses || []} onRefresh={onRefresh} />
+      )}
 
-      <Table
-        columns={[
-          { key: "title", label: "Assignment", render: (task) => (
-            <div>
-              <p className="font-medium text-white">{task.title}</p>
-              {task.recording && (
-                <p className="text-xs text-neutral-500">
-                  {task.recording.username || task.recording.participantId} · {task.recording.moduleTitle}
-                </p>
-              )}
+      {view === "other-tasks" && (
+        <>
+          <form autoComplete="off" onSubmit={save} className="space-y-4 rounded-lg border border-neutral-800 bg-neutral-900/80 p-4">
+            <PanelHeader
+              eyebrow="Manual researcher work"
+              title={editingId ? "Edit Other Task" : "Assign Other Task"}
+              detail=""
+            />
+            <div className="grid gap-3 md:grid-cols-4">
+              <label className="space-y-1 text-xs text-neutral-400">
+                <span>Task type</span>
+                <select className="select-field" value={form.taskType} onChange={(event) => setForm({ ...form, taskType: event.target.value })}>
+                  {researchTaskTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs text-neutral-400">
+                <span>Assigned to</span>
+                <select className="select-field" value={form.assignedTo} onChange={(event) => setForm({ ...form, assignedTo: event.target.value })}>
+                  <option value="">Unassigned</option>
+                  {researchers.map((user) => (
+                    <option key={user.id} value={user.id}>{user.username}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs text-neutral-400">
+                <span>Priority</span>
+                <select className="select-field" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })}>
+                  <option value="low">Low</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </label>
+              <label className="space-y-1 text-xs text-neutral-400">
+                <span>Due date</span>
+                <input className="input-field" type="date" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} />
+              </label>
             </div>
-          ) },
-          { key: "taskType", label: "Outputs", render: (task) => task.requestedOutputs?.length ? task.requestedOutputs.join(", ") : task.taskType },
-          { key: "assignedTo", label: "Assigned", render: (task) => assigneeName(task.assignedTo) },
-          { key: "status", label: "Status", render: (task) => <Badge tone={task.status === "done" ? "green" : task.status === "blocked" ? "red" : "yellow"}>{statusLabel(task.status)}</Badge> },
-          { key: "priority", label: "Priority", render: (task) => <Badge tone={task.priority === "urgent" || task.priority === "high" ? "red" : "neutral"}>{task.priority}</Badge> },
-          { key: "dueDate", label: "Due" },
-          { key: "actions", label: "Actions", render: (task) => (
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="space-y-1 text-xs text-neutral-400">
+                <span>Source text</span>
+                <textarea className="input-field min-h-24" placeholder="Text the researcher should work from" value={form.sourceText} onChange={(event) => setForm({ ...form, sourceText: event.target.value })} />
+              </label>
+              <label className="space-y-1 text-xs text-neutral-400">
+                <span>Notes/instructions for RA</span>
+                <textarea className="input-field min-h-24" placeholder="What should the researcher do?" value={form.instructions} onChange={(event) => setForm({ ...form, instructions: event.target.value })} />
+              </label>
+            </div>
+            {editingId && (
+              <label className="block space-y-1 text-xs text-neutral-400">
+                <span>Feedback visible to researcher</span>
+                <textarea className="input-field min-h-20" value={form.adminFeedback} onChange={(event) => setForm({ ...form, adminFeedback: event.target.value })} placeholder="Explain requested changes or review outcome" />
+              </label>
+            )}
             <div className="flex flex-wrap gap-2">
-              <button className="rounded bg-neutral-800 px-3 py-1 text-xs text-white hover:bg-neutral-700" onClick={() => edit(task)}>
-                {task.status === "review" ? "Review" : "Edit"}
+              <button className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300">
+                {editingId ? "Save Task" : "Create Task"}
               </button>
-              {task.status === "review" && task.recordingId && task.requestedOutputs?.some((output) => output === "transcript" || output === "translation") && (
-                <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600" onClick={() => onApply(task)}>
-                  Apply to recording
-                </button>
-              )}
-              {task.status === "review" && (
-                <button className="rounded bg-blue-700 px-3 py-1 text-xs text-white hover:bg-blue-600" onClick={() => onComplete(task)}>
-                  Approve without applying
+              {editingId && (
+                <button type="button" className="rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700" onClick={resetForm}>
+                  Cancel
                 </button>
               )}
             </div>
-          ) },
-        ]}
-        rows={filteredTasks}
-        emptyText="No assignments match these filters."
-      />
+          </form>
+
+          <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-5">
+            <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
+              <span>Search assignments</span>
+              <input className="input-field" placeholder="Task, source text, instructions..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
+            </label>
+            <label className="space-y-1 text-xs text-neutral-400">
+              <span>Assignee</span>
+              <select className="select-field" value={filters.assignedTo} onChange={(event) => setFilters({ ...filters, assignedTo: event.target.value })}>
+                <option value="all">All assignees</option>
+                <option value="unassigned">Unassigned</option>
+                {researchers.map((user) => (
+                  <option key={user.id} value={user.id}>{user.username}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs text-neutral-400">
+              <span>Status</span>
+              <select className="select-field" value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+                <option value="all">All statuses</option>
+                <option value="todo">To do</option>
+                <option value="in_progress">In progress</option>
+                <option value="review">Awaiting review</option>
+                <option value="done">Done</option>
+                <option value="blocked">Needs changes</option>
+              </select>
+            </label>
+            <label className="space-y-1 text-xs text-neutral-400">
+              <span>Task type</span>
+              <select className="select-field" value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}>
+                <option value="all">All task types</option>
+                {researchTaskTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <Table
+            columns={[
+              { key: "title", label: "Assignment", sortable: true, render: (task) => (
+                <div>
+                  <p className="font-medium text-white">{task.title}</p>
+                  {task.recording && (
+                    <p className="text-xs text-neutral-500">
+                      {task.recording.username || task.recording.participantId} · {task.recording.moduleTitle}
+                    </p>
+                  )}
+                </div>
+              ) },
+              { key: "taskType", label: "Outputs", sortable: true, render: (task) => task.requestedOutputs?.length ? task.requestedOutputs.join(", ") : task.taskType },
+              { key: "assignedTo", label: "Assigned", sortable: true, render: (task) => assigneeName(task.assignedTo) },
+              { key: "status", label: "Status", sortable: true, render: (task) => <Badge tone={task.status === "done" ? "green" : task.status === "blocked" ? "red" : "yellow"}>{statusLabel(task.status)}</Badge> },
+              { key: "priority", label: "Priority", sortable: true, render: (task) => <Badge tone={task.priority === "urgent" || task.priority === "high" ? "red" : "neutral"}>{task.priority}</Badge> },
+              { key: "dueDate", label: "Due", sortable: true },
+              { key: "actions", label: "Actions", render: (task) => (
+                <div className="flex flex-wrap gap-2">
+                  <button className="rounded bg-neutral-800 px-3 py-1 text-xs text-white hover:bg-neutral-700" onClick={() => edit(task)}>
+                    {task.status === "review" ? "Review" : "Edit"}
+                  </button>
+                  {task.status === "review" && task.recordingId && task.requestedOutputs?.some((output) => output === "transcript" || output === "translation") && (
+                    <button className="rounded bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600" onClick={() => onApply(task)}>
+                      Apply to recording
+                    </button>
+                  )}
+                  {task.status === "review" && (
+                    <button className="rounded bg-blue-700 px-3 py-1 text-xs text-white hover:bg-blue-600" onClick={() => onComplete(task)}>
+                      Approve without applying
+                    </button>
+                  )}
+                </div>
+              ) },
+            ]}
+            rows={sortedTasks}
+            emptyText="No assignments match these filters."
+            sort={taskSort}
+            onSort={toggleTaskSort}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -1206,6 +1361,7 @@ function UsersTab({ users, onRefresh }) {
   const [error, setError] = useState("");
 
   const participantUsers = useMemo(() => users.filter((user) => user.role !== USER_ROLES.ADMIN), [users]);
+  const activeParticipantCount = useMemo(() => participantUsers.filter((user) => user.active !== false).length, [participantUsers]);
   const dialects = useMemo(() => uniq(participantUsers.map((user) => user.dialect)), [participantUsers]);
   const filteredUsers = useMemo(
     () =>
@@ -1255,7 +1411,7 @@ function UsersTab({ users, onRefresh }) {
       <PanelHeader
         eyebrow="People"
         title="Participants and roles"
-        detail={`${filteredUsers.length} shown · ${participantUsers.length} total`}
+        detail={`${filteredUsers.length} shown · ${activeParticipantCount} active`}
       />
       {error && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{error}</p>}
       <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-5">
@@ -1394,6 +1550,10 @@ function ContentCreatorTab({ users, recordsPage }) {
     () => users.filter((user) => user.role === USER_ROLES.CONTENT_CONTRIBUTOR),
     [users]
   );
+  const activeContentCreatorCount = useMemo(
+    () => contentCreators.filter((user) => user.active !== false).length,
+    [contentCreators]
+  );
   const creatorIds = useMemo(
     () => new Set(contentCreators.map((user) => user.participantId)),
     [contentCreators]
@@ -1430,7 +1590,7 @@ function ContentCreatorTab({ users, recordsPage }) {
       <PanelHeader
         eyebrow="Content creators"
         title="Content Creator Inputs"
-        detail={`${contentCreators.length} content creators · ${creatorRecords.length} records on current page`}
+        detail={`${activeContentCreatorCount} active content creators · ${creatorRecords.length} active records on current page`}
       />
 
       <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 md:grid-cols-3">
@@ -1717,7 +1877,7 @@ function DataTab({
       <PanelHeader
         eyebrow="Collected data"
         title="Records"
-        detail={`${recordsPage.total || 0} total recordings · page ${recordsPage.page || 1} of ${recordsPage.totalPages || 1}`}
+        detail={`${recordsPage.total || 0} active recordings · page ${recordsPage.page || 1} of ${recordsPage.totalPages || 1}`}
       />
 
       <div className="flex flex-wrap gap-2">
@@ -1888,7 +2048,7 @@ function DataTab({
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-neutral-500">
-              Showing {sortedRecordings.length} rows on this page from {recordsPage.total || 0} matching records.
+              Showing {sortedRecordings.length} rows on this page from {recordsPage.total || 0} active matching records.
             </p>
             <div className="flex gap-2">
               <button
@@ -2189,6 +2349,8 @@ export default function AdminPanel() {
   const [recordsPage, setRecordsPage] = useState({ rows: [], page: 1, pageSize: 50, total: 0, totalPages: 1 });
   const [correctionsData, setCorrectionsData] = useState({ corrections: [], groups: [], total: 0 });
   const [prompts, setPrompts] = useState([]);
+  const [visualGenomePrompts, setVisualGenomePrompts] = useState([]);
+  const [visualGenomeResponses, setVisualGenomeResponses] = useState([]);
   const [researchTasks, setResearchTasks] = useState([]);
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2211,7 +2373,7 @@ export default function AdminPanel() {
     setLoading(true);
 
     try {
-      const [sessionAdmin, overviewData, usersData, rawData, recordsData, correctionsResult, promptsData, tasksData, adminsData] = await Promise.all([
+      const [sessionAdmin, overviewData, usersData, rawData, recordsData, correctionsResult, promptsData, visualGenomeData, visualGenomeResponseData, tasksData, adminsData] = await Promise.all([
         fetchAdminSession(),
         fetchAdminOverview(),
         fetchAdminUsers(),
@@ -2219,6 +2381,8 @@ export default function AdminPanel() {
         fetchAdminRecords(1, recordsPage.pageSize || 50),
         fetchAdminCorrections(),
         fetchAdminPrompts(),
+        fetchVisualGenomePrompts(),
+        fetchVisualGenomeResponses(),
         fetchResearchTasks(),
         fetchAdmins(),
       ]);
@@ -2229,6 +2393,8 @@ export default function AdminPanel() {
       setRecordsPage(recordsData);
       setCorrectionsData(correctionsResult);
       setPrompts(promptsData);
+      setVisualGenomePrompts(visualGenomeData);
+      setVisualGenomeResponses(visualGenomeResponseData);
       setResearchTasks(tasksData);
       setAdmins(adminsData);
     } catch (err) {
@@ -2317,9 +2483,11 @@ export default function AdminPanel() {
     if (activeTab === "prompts") return <PromptsTab prompts={prompts} onRefresh={load} onAuthError={handleAuthError} />;
     if (activeTab === "research") {
       return (
-        <ResearchTasksTab
+        <ResearcherWorkflowTab
           tasks={researchTasks}
           users={users}
+          visualGenomePrompts={visualGenomePrompts}
+          visualGenomeResponses={visualGenomeResponses}
           onRefresh={load}
           onOpenRecords={() => setActiveTab("data")}
           onApply={applyAssignment}
@@ -2348,8 +2516,8 @@ export default function AdminPanel() {
       );
     }
     if (activeTab === "admins") return <AdminsTab admins={admins} currentAdmin={admin} onRefresh={load} />;
-    return <OverviewTab overview={overview} prompts={prompts} />;
-  }, [activeTab, admin, overview, users, data, recordsPage, correctionsData, prompts, researchTasks, admins, recordsLoading, correctionsLoading, load, loadRecordsPage, loadCorrections, approveCorrection, applyAssignment, completeAssignment, handleAuthError]);
+    return <OverviewTab overview={overview} />;
+  }, [activeTab, admin, overview, users, data, recordsPage, correctionsData, prompts, visualGenomePrompts, visualGenomeResponses, researchTasks, admins, recordsLoading, correctionsLoading, load, loadRecordsPage, loadCorrections, approveCorrection, applyAssignment, completeAssignment, handleAuthError]);
 
   if (!token) return <Navigate to="/admin/login" replace />;
 

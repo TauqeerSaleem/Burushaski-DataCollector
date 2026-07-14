@@ -206,6 +206,42 @@ export async function fetchResearchTasks() {
   return data.tasks || [];
 }
 
+export async function fetchVisualGenomePrompts() {
+  const data = await request("/api/admin/visual-genome-prompts");
+  return data.prompts || [];
+}
+
+export async function fetchVisualGenomeResponses() {
+  const data = await request("/api/admin/visual-genome-responses");
+  return data.responses || [];
+}
+
+export async function createVisualGenomePrompt(prompt) {
+  const data = await request("/api/admin/visual-genome-prompts", {
+    method: "POST",
+    body: JSON.stringify(prompt),
+  });
+
+  return data.prompt;
+}
+
+export async function updateVisualGenomePrompt(id, prompt) {
+  const data = await request(`/api/admin/visual-genome-prompts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(prompt),
+  });
+
+  return data.prompt;
+}
+
+export async function deactivateVisualGenomePrompt(id) {
+  const data = await request(`/api/admin/visual-genome-prompts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+  return data?.prompt || null;
+}
+
 export async function createResearchTask(task) {
   const data = await request("/api/admin/research-tasks", {
     method: "POST",

@@ -26,11 +26,19 @@ const MAX_PROMPT_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_RECORDING_BYTES = 30 * 1024 * 1024;
 const MAX_RECORDING_MS = 5 * 60 * 1000;
 const PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
-const RESEARCH_TASK_TYPES = new Set(["transcription", "translation", "validation", "metadata_review"]);
+const RESEARCH_TASK_TYPES = new Set([
+  "transcription",
+  "translation",
+  "validation",
+  "metadata_review",
+  "folk_tales",
+  "sadaf_munshi",
+]);
 const RESEARCH_TASK_STATUSES = new Set(["todo", "in_progress", "review", "done", "blocked"]);
 const RESEARCH_TASK_PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
 const RESEARCH_SOURCE_TYPES = new Set(["audio", "text", "content_url", "recording", "feedback"]);
 const RESEARCH_OUTPUTS = new Set(["transcript", "translation", "metadata_review", "validation"]);
+const SUPABASE_PAGE_SIZE = 1000;
 const ALLOWED_PROMPT_MEDIA_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -189,6 +197,24 @@ async function signPromptRows(rows) {
       };
     })
   );
+}
+
+async function fetchAllRows(buildQuery, pageSize = SUPABASE_PAGE_SIZE) {
+  const rows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await buildQuery().range(from, to);
+
+    if (error) throw error;
+
+    const page = data || [];
+    rows.push(...page);
+
+    if (page.length < pageSize) return rows;
+    from += pageSize;
+  }
 }
 
 function recordingExtension(contentType) {
@@ -417,6 +443,154 @@ function promptToClient(row) {
   };
 }
 
+function visualGenomePromptToClient(row) {
+  return {
+    id: row.id,
+    descriptionId: row.description_id,
+    imageId: row.image_id,
+    fileName: row.file_name || "",
+    sourceImageId: row.source_image_id || "",
+    description: row.description || "",
+    notes: row.notes || "",
+    active: row.active !== false,
+    createdBy: row.created_by || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function visualGenomeResponseToClient(row) {
+  const description = Array.isArray(row.visual_genome_descriptions)
+    ? row.visual_genome_descriptions[0]
+    : row.visual_genome_descriptions || {};
+  const image = Array.isArray(description.visual_genome_images)
+    ? description.visual_genome_images[0]
+    : description.visual_genome_images || {};
+  const researcher = Array.isArray(row.app_users)
+    ? row.app_users[0]
+    : row.app_users || {};
+
+  return {
+    id: row.id,
+    descriptionId: row.description_id,
+    researcherId: row.researcher_id,
+    researcherName: researcher.username || "",
+    participantId: researcher.participant_id || "",
+    dialect: researcher.dialect || "",
+    description: description.description || "",
+    descriptionActive: description.active !== false,
+    fileName: image.file_name || "",
+    sourceImageId: image.source_image_id || "",
+    translation: row.translation || "",
+    notes: row.notes || "",
+    status: row.status || "submitted",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function researcherVisualGenomePromptToClient(row, response = null) {
+  return {
+    id: row.id,
+    descriptionId: row.id,
+    description: row.description || "",
+    response: response
+      ? {
+          id: response.id,
+          translation: response.translation || "",
+          notes: response.notes || "",
+          status: response.status || "submitted",
+          createdAt: response.created_at,
+          updatedAt: response.updated_at,
+        }
+      : null,
+  };
+}
+
+function visualGenomePayload(body, admin) {
+  const fileName = cleanText(body.fileName || body.file_name || body.imageKey || body.imageReference);
+  const sourceImageId = cleanText(body.sourceImageId || body.source_image_id);
+  const description = cleanText(body.description);
+
+  return {
+    image: {
+      ...(fileName !== undefined ? { file_name: fileName } : {}),
+      ...(sourceImageId !== undefined ? { source_image_id: sourceImageId } : {}),
+    },
+    description: {
+      ...(description !== undefined ? { description } : {}),
+      ...(body.notes !== undefined ? { notes: cleanText(body.notes) } : {}),
+      ...(body.active !== undefined ? { active: Boolean(body.active) } : {}),
+      ...(admin ? { created_by: admin.username } : {}),
+      updated_at: new Date().toISOString(),
+    },
+  };
+}
+
+async function findOrCreateVisualGenomeImage(imagePayload) {
+  const fileName = cleanText(imagePayload.file_name);
+  const sourceImageId = cleanText(imagePayload.source_image_id);
+
+  if (!fileName && !sourceImageId) {
+    throw new Error("Image/file reference is required.");
+  }
+
+  let existing = null;
+  if (sourceImageId) {
+    const { data, error } = await supabase
+      .from("visual_genome_images")
+      .select("*")
+      .eq("source_image_id", sourceImageId)
+      .maybeSingle();
+
+    if (error) throw error;
+    existing = data;
+  }
+
+  if (!existing && fileName) {
+    const { data, error } = await supabase
+      .from("visual_genome_images")
+      .select("*")
+      .eq("file_name", fileName)
+      .maybeSingle();
+
+    if (error) throw error;
+    existing = data;
+  }
+
+  if (existing) {
+    const updatePayload = {};
+    if (fileName && existing.file_name !== fileName) updatePayload.file_name = fileName;
+    if (sourceImageId && existing.source_image_id !== sourceImageId) updatePayload.source_image_id = sourceImageId;
+
+    if (Object.keys(updatePayload).length) {
+      const { data, error } = await supabase
+        .from("visual_genome_images")
+        .update(updatePayload)
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+
+    return existing;
+  }
+
+  const { data, error } = await supabase
+    .from("visual_genome_images")
+    .insert({
+      file_name: fileName,
+      source_image_id: sourceImageId,
+    })
+    .select("*")
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 function recordingToClient(row) {
   return {
     id: row.id,
@@ -574,7 +748,7 @@ function storageSegment(value) {
 async function requireActiveResearcherByParticipantId(participantId, res) {
   const { data, error } = await supabase
     .from("app_users")
-    .select("id, participant_id, username, role, active")
+    .select("id, participant_id, username, dialect, role, active")
     .eq("participant_id", participantId)
     .maybeSingle();
 
@@ -621,7 +795,10 @@ async function validateResearchTaskLinks(payload, existingTask = null) {
 
 async function enrichResearchTasks(rows) {
   const recordingIds = Array.from(new Set((rows || []).map((row) => row.recording_id).filter(Boolean)));
-  if (!recordingIds.length) return (rows || []).map(taskToClient);
+
+  if (!recordingIds.length) {
+    return (rows || []).map(taskToClient);
+  }
 
   const { data: recordings, error } = await supabase
     .from("recordings")
@@ -1369,24 +1546,38 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
 
-    const [
-      usersResult,
-      recordingsResult,
-      validationsResult,
-    ] = await Promise.all([
-      supabase.from("app_users").select("role, dialect, gender, created_at"),
-      supabase.from("recordings").select("participant_id, module_id, sentence_id, created_at"),
-      supabase.from("validations").select("id", { count: "exact", head: true }),
+    const [users, prompts, recordings, validations] = await Promise.all([
+      fetchAllRows(() =>
+        supabase
+          .from("app_users")
+          .select("participant_id, role, dialect, gender, created_at")
+          .eq("active", true)
+          .order("created_at", { ascending: true })
+      ),
+      fetchAllRows(() =>
+        supabase
+          .from("prompt_bank")
+          .select("module_id, prompt_id, created_at")
+          .eq("active", true)
+      ),
+      fetchAllRows(() =>
+        supabase
+          .from("recordings")
+          .select("id, participant_id, module_id, sentence_id, created_at")
+          .order("created_at", { ascending: true })
+      ),
+      fetchAllRows(() => supabase.from("validations").select("recording_id")),
     ]);
 
-    const errors = [usersResult, recordingsResult]
-      .map((result) => result.error)
-      .filter(Boolean);
-
-    if (errors.length) throw errors[0];
-
-    const users = usersResult.data || [];
-    const recordings = recordingsResult.data || [];
+    const activeParticipantIds = new Set(users.map((user) => user.participant_id).filter(Boolean));
+    const activePromptKeys = new Set(prompts.map((prompt) => `${prompt.module_id}:${prompt.prompt_id}`));
+    const activeRecordings = recordings.filter(
+      (recording) =>
+        activeParticipantIds.has(recording.participant_id) &&
+        activePromptKeys.has(`${recording.module_id}:${recording.sentence_id}`)
+    );
+    const activeRecordingIds = new Set(activeRecordings.map((recording) => recording.id));
+    const activeValidations = validations.filter((validation) => activeRecordingIds.has(validation.recording_id));
 
     const countBy = (rows, key) =>
       rows.reduce((map, row) => {
@@ -1398,15 +1589,16 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
     res.json({
       totals: {
         users: users.length,
-        recordings: recordings.length,
-        validations: validationsResult.error ? 0 : validationsResult.count || 0,
+        prompts: prompts.length,
+        recordings: activeRecordings.length,
+        validations: activeValidations.length,
       },
       usersByRole: countBy(users, "role"),
       usersByDialect: countBy(users, "dialect"),
       usersByGender: countBy(users, "gender"),
-      recordingsByModule: countBy(recordings, "module_id"),
+      recordingsByModule: countBy(activeRecordings, "module_id"),
       recentUsers: users.slice(-8).reverse(),
-      recentRecordings: recordings.slice(-8).reverse(),
+      recentRecordings: activeRecordings.slice(-8).reverse(),
     });
   } catch (error) {
     console.error("Admin overview failed:", error.message);
@@ -1418,23 +1610,24 @@ router.get("/admin/users", requireAdmin, async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
 
-    const [usersResult, countsResult] = await Promise.all([
-      supabase
-        .from("app_users")
-        .select("*")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("participant_recording_counts")
-        .select("participant_id, recording_count"),
+    const [users, counts] = await Promise.all([
+      fetchAllRows(() =>
+        supabase
+          .from("app_users")
+          .select("*")
+          .order("created_at", { ascending: false })
+      ),
+      fetchAllRows(() =>
+        supabase
+          .from("participant_recording_counts")
+          .select("participant_id, recording_count")
+      ),
     ]);
 
-    const error = usersResult.error || countsResult.error;
-    if (error) throw error;
-
-    const countMap = new Map((countsResult.data || []).map((count) => [count.participant_id, count.recording_count || 0]));
+    const countMap = new Map(counts.map((count) => [count.participant_id, count.recording_count || 0]));
 
     res.json({
-      users: (usersResult.data || []).map((user) =>
+      users: users.map((user) =>
         userToClient({
           ...user,
           recording_count: countMap.get(user.participant_id) || 0,
@@ -1545,7 +1738,25 @@ router.get("/admin/corrections", requireAdmin, async (req, res) => {
     const { data, error } = await query;
     if (error) throw error;
 
-    const promptKeys = (data || [])
+    const feedbackRows = data || [];
+    const feedbackParticipantIds = Array.from(new Set(feedbackRows.map((row) => row.participant_id).filter(Boolean)));
+    let activeParticipantSet = new Set();
+    if (feedbackParticipantIds.length) {
+      const { data: activeUsers, error: activeUsersError } = await supabase
+        .from("app_users")
+        .select("participant_id")
+        .in("participant_id", feedbackParticipantIds)
+        .eq("active", true);
+
+      if (activeUsersError) throw activeUsersError;
+      activeParticipantSet = new Set((activeUsers || []).map((user) => user.participant_id));
+    }
+
+    const activeFeedbackRows = feedbackRows.filter((row) =>
+      !row.participant_id || activeParticipantSet.has(row.participant_id)
+    );
+
+    const promptKeys = activeFeedbackRows
       .filter((row) => row.module_id && row.sentence_id)
       .map((row) => ({ moduleId: row.module_id, promptId: row.sentence_id }));
     const promptIds = Array.from(new Set(promptKeys.map((key) => key.promptId)));
@@ -1555,13 +1766,18 @@ router.get("/admin/corrections", requireAdmin, async (req, res) => {
       const { data: prompts, error: promptError } = await supabase
         .from("prompt_bank")
         .select("id, prompt_id, module_id, module_title, prompt_type, dialect, english, transliteration")
-        .in("prompt_id", promptIds);
+        .in("prompt_id", promptIds)
+        .eq("active", true);
 
       if (promptError) throw promptError;
       promptRows = prompts || [];
     }
 
     const promptMap = new Map(promptRows.map((prompt) => [`${prompt.module_id}:${prompt.prompt_id}`, prompt]));
+    const activePromptKeys = new Set(promptMap.keys());
+    const scopedFeedbackRows = activeFeedbackRows.filter((row) =>
+      !row.module_id || !row.sentence_id || activePromptKeys.has(`${row.module_id}:${row.sentence_id}`)
+    );
 
     let reviews = [];
     if (promptKeys.length) {
@@ -1582,7 +1798,7 @@ router.get("/admin/corrections", requireAdmin, async (req, res) => {
     });
 
     const correctionsWithAudio = await Promise.all(
-      (data || []).map(async (row) => {
+      scopedFeedbackRows.map(async (row) => {
         if (!row.audio_url) return row;
 
         const { data: signedAudio } = await supabase.storage
@@ -1784,26 +2000,26 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
 
     let promptSearchIds = [];
     if (search) {
-      const { data: matchingPrompts, error: promptSearchError } = await supabase
-        .from("prompt_bank")
-        .select("prompt_id")
-        .ilike("english", `%${search}%`)
-        .limit(1000);
-
-      if (promptSearchError) throw promptSearchError;
-      promptSearchIds = Array.from(new Set((matchingPrompts || []).map((prompt) => prompt.prompt_id)));
+      const matchingPrompts = await fetchAllRows(() =>
+        supabase
+          .from("prompt_bank")
+          .select("prompt_id")
+          .eq("active", true)
+          .ilike("english", `%${search}%`)
+      );
+      promptSearchIds = Array.from(new Set(matchingPrompts.map((prompt) => prompt.prompt_id)));
     }
 
     let roleParticipantIds = null;
     if (participantRole) {
-      const { data: matchingUsers, error: roleSearchError } = await supabase
-        .from("app_users")
-        .select("participant_id")
-        .eq("role", participantRole)
-        .limit(EXPORT_LIMIT);
-
-      if (roleSearchError) throw roleSearchError;
-      roleParticipantIds = (matchingUsers || []).map((user) => user.participant_id).filter(Boolean);
+      const matchingUsers = await fetchAllRows(() =>
+        supabase
+          .from("app_users")
+          .select("participant_id")
+          .eq("role", participantRole)
+          .eq("active", true)
+      );
+      roleParticipantIds = matchingUsers.map((user) => user.participant_id).filter(Boolean);
 
       if (roleParticipantIds.length === 0 || (participantId && !roleParticipantIds.includes(participantId))) {
         return res.json({
@@ -1818,24 +2034,24 @@ router.get("/admin/records", requireAdmin, async (req, res) => {
 
     let participantSearchIds = [];
     if (search) {
-      const { data: matchingUsers, error: userSearchError } = await supabase
-        .from("app_users")
-        .select("participant_id")
-        .or([
-          `participant_id.ilike.%${search}%`,
-          `username.ilike.%${search}%`,
-          `display_name.ilike.%${search}%`,
-          `email.ilike.%${search}%`,
-          `mobile_number.ilike.%${search}%`,
-        ].join(","))
-        .limit(1000);
-
-      if (userSearchError) throw userSearchError;
-      participantSearchIds = Array.from(new Set((matchingUsers || []).map((user) => user.participant_id).filter(Boolean)));
+      const matchingUsers = await fetchAllRows(() =>
+        supabase
+          .from("app_users")
+          .select("participant_id")
+          .eq("active", true)
+          .or([
+            `participant_id.ilike.%${search}%`,
+            `username.ilike.%${search}%`,
+            `display_name.ilike.%${search}%`,
+            `email.ilike.%${search}%`,
+            `mobile_number.ilike.%${search}%`,
+          ].join(","))
+      );
+      participantSearchIds = Array.from(new Set(matchingUsers.map((user) => user.participant_id).filter(Boolean)));
     }
 
     let query = supabase
-      .from("recordings")
+      .from("active_recordings")
       .select("*", { count: "exact" })
       .order("created_at", { ascending: false });
 
@@ -2147,25 +2363,26 @@ router.get("/admin/prompts", requireAdmin, async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
 
-    const [promptsResult, countsResult] = await Promise.all([
-      supabase
-        .from("prompt_bank")
-        .select("*")
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("prompt_recording_counts")
-        .select("module_id, prompt_id, recording_count"),
+    const [prompts, counts] = await Promise.all([
+      fetchAllRows(() =>
+        supabase
+          .from("prompt_bank")
+          .select("*")
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: false })
+      ),
+      fetchAllRows(() =>
+        supabase
+          .from("prompt_recording_counts")
+          .select("module_id, prompt_id, recording_count")
+      ),
     ]);
 
-    const error = promptsResult.error || countsResult.error;
-    if (error) throw error;
-
     const countMap = new Map(
-      (countsResult.data || []).map((count) => [`${count.module_id}:${count.prompt_id}`, count.recording_count || 0])
+      counts.map((count) => [`${count.module_id}:${count.prompt_id}`, count.recording_count || 0])
     );
 
-    const signedPrompts = await signPromptRows(promptsResult.data || []);
+    const signedPrompts = await signPromptRows(prompts);
 
     res.json({
       prompts: signedPrompts.map((prompt) =>
@@ -2277,6 +2494,192 @@ router.delete("/admin/prompts/:id", requireAdmin, async (req, res) => {
   }
 });
 
+router.get("/admin/visual-genome-prompts", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const rows = await fetchAllRows(() =>
+      supabase
+        .from("visual_genome_descriptions")
+        .select("id, image_id, description, notes, active, created_by, created_at, updated_at, visual_genome_images(file_name, source_image_id)")
+        .order("created_at", { ascending: false })
+    );
+
+    res.json({
+      prompts: rows.map((row) => {
+        const image = Array.isArray(row.visual_genome_images)
+          ? row.visual_genome_images[0]
+          : row.visual_genome_images || {};
+        return visualGenomePromptToClient({
+          ...row,
+          description_id: row.id,
+          file_name: image.file_name,
+          source_image_id: image.source_image_id,
+        });
+      }),
+    });
+  } catch (error) {
+    console.error("Admin VisualGenomeDB prompts failed:", error.message);
+    res.status(500).json({ error: "Unable to load VisualGenomeDB prompts." });
+  }
+});
+
+router.get("/admin/visual-genome-responses", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const rows = await fetchAllRows(() =>
+      supabase
+        .from("visual_genome_translations")
+        .select(`
+          id,
+          description_id,
+          researcher_id,
+          translation,
+          notes,
+          status,
+          created_at,
+          updated_at,
+          app_users(username, participant_id, dialect),
+          visual_genome_descriptions(
+            description,
+            active,
+            visual_genome_images(file_name, source_image_id)
+          )
+        `)
+        .order("updated_at", { ascending: false })
+    );
+
+    res.json({ responses: rows.map(visualGenomeResponseToClient) });
+  } catch (error) {
+    console.error("Admin VisualGenomeDB responses failed:", error.message);
+    res.status(500).json({ error: "Unable to load VisualGenomeDB responses." });
+  }
+});
+
+router.post("/admin/visual-genome-prompts", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const payload = visualGenomePayload(req.body, req.admin);
+
+    if (!payload.image.file_name && !payload.image.source_image_id) {
+      return res.status(400).json({ error: "Image/file reference is required." });
+    }
+    if (!payload.description.description) {
+      return res.status(400).json({ error: "Description text is required." });
+    }
+
+    const image = await findOrCreateVisualGenomeImage(payload.image);
+
+    const { data, error } = await supabase
+      .from("visual_genome_descriptions")
+      .insert({
+        ...payload.description,
+        image_id: image.id,
+      })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+
+    await writeActivity(req.admin, "create_visual_genome_prompt", "visual_genome_description", data.id);
+    res.status(201).json({
+      prompt: visualGenomePromptToClient({
+        ...data,
+        description_id: data.id,
+        file_name: image.file_name,
+        source_image_id: image.source_image_id,
+      }),
+    });
+  } catch (error) {
+    console.error("Admin VisualGenomeDB prompt create failed:", error.message);
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That VisualGenomeDB description already exists for this image." });
+    }
+    res.status(500).json({ error: "Unable to create VisualGenomeDB prompt." });
+  }
+});
+
+router.patch("/admin/visual-genome-prompts/:id", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const payload = visualGenomePayload(req.body);
+
+    const { data: existing, error: existingError } = await supabase
+      .from("visual_genome_descriptions")
+      .select("id, image_id")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+    if (!existing) return res.status(404).json({ error: "VisualGenomeDB prompt not found." });
+
+    let image = null;
+    if (payload.image.file_name || payload.image.source_image_id) {
+      image = await findOrCreateVisualGenomeImage(payload.image);
+      payload.description.image_id = image.id;
+    }
+
+    const { data, error } = await supabase
+      .from("visual_genome_descriptions")
+      .update(payload.description)
+      .eq("id", req.params.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "VisualGenomeDB prompt not found." });
+
+    if (!image) {
+      const { data: existingImage, error: imageError } = await supabase
+        .from("visual_genome_images")
+        .select("*")
+        .eq("id", data.image_id || existing.image_id)
+        .maybeSingle();
+
+      if (imageError) throw imageError;
+      image = existingImage || {};
+    }
+
+    await writeActivity(req.admin, "update_visual_genome_prompt", "visual_genome_description", req.params.id);
+    res.json({
+      prompt: visualGenomePromptToClient({
+        ...data,
+        description_id: data.id,
+        file_name: image.file_name,
+        source_image_id: image.source_image_id,
+      }),
+    });
+  } catch (error) {
+    console.error("Admin VisualGenomeDB prompt update failed:", error.message);
+    res.status(500).json({ error: "Unable to update VisualGenomeDB prompt." });
+  }
+});
+
+router.delete("/admin/visual-genome-prompts/:id", requireAdmin, async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const { data, error } = await supabase
+      .from("visual_genome_descriptions")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", req.params.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "VisualGenomeDB prompt not found." });
+
+    await writeActivity(req.admin, "deactivate_visual_genome_prompt", "visual_genome_description", req.params.id);
+    res.json({ prompt: visualGenomePromptToClient({ ...data, description_id: data.id }) });
+  } catch (error) {
+    console.error("Admin VisualGenomeDB prompt deactivate failed:", error.message);
+    res.status(500).json({ error: "Unable to deactivate VisualGenomeDB prompt." });
+  }
+});
+
 router.get("/admin/research-tasks", requireAdmin, async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
@@ -2345,7 +2748,7 @@ router.post("/admin/research-tasks", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Admin research task create failed:", error.message);
     if (error.code === "23505") {
-      return res.status(409).json({ error: "This recording already has an open assignment for that researcher." });
+      return res.status(409).json({ error: "This item already has an open assignment for that researcher." });
     }
     res.status(500).json({ error: "Unable to create research task." });
   }
@@ -2393,7 +2796,7 @@ router.patch("/admin/research-tasks/:id", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Admin research task update failed:", error.message);
     if (error.code === "23505") {
-      return res.status(409).json({ error: "This recording already has an open assignment for that researcher." });
+      return res.status(409).json({ error: "This item already has an open assignment for that researcher." });
     }
     res.status(500).json({ error: "Unable to update research task." });
   }
@@ -2528,6 +2931,90 @@ router.patch("/researcher/tasks/:id", async (req, res) => {
   } catch (error) {
     console.error("Researcher task update failed:", error.message);
     res.status(500).json({ error: "Unable to update assigned task." });
+  }
+});
+
+router.get("/researcher/visual-genome-tasks", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const participantId = cleanText(req.query.participantId);
+    if (!participantId) return res.status(400).json({ error: "Participant ID is required." });
+
+    const researcher = await requireActiveResearcherByParticipantId(participantId, res);
+    if (!researcher) return;
+
+    const [promptsResult, responsesResult] = await Promise.all([
+      fetchAllRows(() =>
+        supabase
+          .from("visual_genome_descriptions")
+          .select("id, description, active, created_at")
+          .eq("active", true)
+          .order("created_at", { ascending: false })
+      ),
+      fetchAllRows(() =>
+        supabase
+          .from("visual_genome_translations")
+          .select("id, description_id, translation, notes, status, created_at, updated_at")
+          .eq("researcher_id", researcher.id)
+      ),
+    ]);
+
+    const responseMap = new Map((responsesResult || []).map((row) => [row.description_id, row]));
+    res.json({
+      tasks: (promptsResult || []).map((row) => researcherVisualGenomePromptToClient(row, responseMap.get(row.id))),
+    });
+  } catch (error) {
+    console.error("Researcher VisualGenomeDB tasks failed:", error.message);
+    res.status(500).json({ error: "Unable to load VisualGenomeDB tasks." });
+  }
+});
+
+router.patch("/researcher/visual-genome-tasks/:id", async (req, res) => {
+  try {
+    if (!requireServiceRole(res)) return;
+
+    const participantId = cleanText(req.body.participantId);
+    if (!participantId) return res.status(400).json({ error: "Participant ID is required." });
+
+    const researcher = await requireActiveResearcherByParticipantId(participantId, res);
+    if (!researcher) return;
+
+    const translation = cleanText(req.body.translation);
+    const notes = req.body.notes !== undefined ? cleanText(req.body.notes) : null;
+    if (!translation) return res.status(400).json({ error: "Translation is required." });
+
+    const { data: prompt, error: promptError } = await supabase
+      .from("visual_genome_descriptions")
+      .select("id, description, active")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    if (promptError) throw promptError;
+    if (!prompt || prompt.active === false) return res.status(404).json({ error: "VisualGenomeDB prompt not found." });
+
+    const now = new Date().toISOString();
+    const { data: response, error } = await supabase
+      .from("visual_genome_translations")
+      .upsert(
+        {
+          description_id: prompt.id,
+          researcher_id: researcher.id,
+          translation,
+          notes,
+          status: "submitted",
+          updated_at: now,
+        },
+        { onConflict: "description_id,researcher_id" }
+      )
+      .select("id, description_id, translation, notes, status, created_at, updated_at")
+      .single();
+
+    if (error) throw error;
+    res.json({ task: researcherVisualGenomePromptToClient(prompt, response) });
+  } catch (error) {
+    console.error("Researcher VisualGenomeDB update failed:", error.message);
+    res.status(500).json({ error: "Unable to save VisualGenomeDB translation." });
   }
 });
 

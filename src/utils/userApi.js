@@ -124,3 +124,21 @@ export async function updateResearcherTask(id, participantId, task) {
 
   return data.task;
 }
+
+export async function getVisualGenomeTasks(participantId) {
+  const data = await request(
+    `/api/researcher/visual-genome-tasks?participantId=${encodeURIComponent(participantId)}`,
+    { method: "GET", retries: 1 }
+  );
+
+  return data.tasks || [];
+}
+
+export async function submitVisualGenomeTranslation(id, participantId, payload) {
+  const data = await request(`/api/researcher/visual-genome-tasks/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ ...payload, participantId }),
+  });
+
+  return data.task;
+}

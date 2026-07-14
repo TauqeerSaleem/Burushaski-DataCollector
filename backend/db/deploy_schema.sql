@@ -149,6 +149,43 @@ create table if not exists public.prompt_correction_reviews (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.visual_genome_images (
+  id uuid primary key default gen_random_uuid(),
+  file_name text,
+  source_image_id text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (file_name is not null or source_image_id is not null),
+  unique (file_name),
+  unique (source_image_id)
+);
+
+create table if not exists public.visual_genome_descriptions (
+  id uuid primary key default gen_random_uuid(),
+  image_id uuid not null references public.visual_genome_images(id) on delete cascade,
+  description text not null,
+  notes text,
+  active boolean not null default true,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (image_id, description)
+);
+
+create table if not exists public.visual_genome_translations (
+  id uuid primary key default gen_random_uuid(),
+  description_id uuid not null references public.visual_genome_descriptions(id) on delete cascade,
+  researcher_id uuid not null references public.app_users(id) on delete cascade,
+  translation text not null,
+  notes text,
+  status text not null default 'submitted',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (description_id, researcher_id),
+  check (status in ('submitted', 'approved', 'needs_changes'))
+);
+
 do $$
 begin
   alter table public.prompt_bank drop constraint if exists prompt_bank_prompt_id_key;
@@ -159,7 +196,7 @@ create table if not exists public.research_tasks (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   task_type text not null default 'transcription'
-    check (task_type in ('transcription', 'translation', 'validation', 'metadata_review')),
+    check (task_type in ('transcription', 'translation', 'validation', 'metadata_review', 'folk_tales', 'sadaf_munshi')),
   assigned_to uuid references public.app_users(id) on delete set null,
   recording_id bigint references public.recordings(id) on delete set null,
   requested_outputs text[] not null default '{}',
@@ -274,6 +311,20 @@ add column if not exists applied_by text;
 
 do $$
 begin
+  alter table public.research_tasks drop constraint if exists research_tasks_task_type_check;
+  alter table public.research_tasks
+  add constraint research_tasks_task_type_check
+  check (task_type in ('transcription', 'translation', 'validation', 'metadata_review', 'folk_tales', 'sadaf_munshi'));
+
+  alter table public.research_tasks drop constraint if exists research_tasks_source_type_check;
+  alter table public.research_tasks
+  add constraint research_tasks_source_type_check
+  check (source_type in ('audio', 'text', 'content_url', 'recording', 'feedback'));
+end;
+$$;
+
+do $$
+begin
   alter table public.prompt_bank drop constraint if exists prompt_bank_prompt_type_check;
   alter table public.prompt_bank
   add constraint prompt_bank_prompt_type_check
@@ -319,6 +370,18 @@ create index if not exists prompt_correction_reviews_prompt_idx
 on public.prompt_correction_reviews (module_id, prompt_id);
 create index if not exists prompt_correction_reviews_created_idx
 on public.prompt_correction_reviews (created_at);
+create index if not exists visual_genome_images_source_id_idx
+on public.visual_genome_images (source_image_id);
+create index if not exists visual_genome_images_file_name_idx
+on public.visual_genome_images (file_name);
+create index if not exists visual_genome_descriptions_image_idx
+on public.visual_genome_descriptions (image_id);
+create index if not exists visual_genome_descriptions_active_idx
+on public.visual_genome_descriptions (active);
+create index if not exists visual_genome_translations_description_idx
+on public.visual_genome_translations (description_id);
+create index if not exists visual_genome_translations_researcher_idx
+on public.visual_genome_translations (researcher_id);
 create index if not exists research_tasks_status_idx on public.research_tasks (status);
 create index if not exists research_tasks_assigned_idx on public.research_tasks (assigned_to);
 create index if not exists research_tasks_recording_idx on public.research_tasks (recording_id);
@@ -336,6 +399,19 @@ select
   sentence_id as prompt_id,
   count(*)::integer as recording_count
 from public.recordings
+where exists (
+  select 1
+  from public.app_users u
+  where u.participant_id = recordings.participant_id
+    and u.active = true
+)
+and exists (
+  select 1
+  from public.prompt_bank p
+  where p.module_id = recordings.module_id
+    and p.prompt_id = recordings.sentence_id
+    and p.active = true
+)
 group by module_id, sentence_id;
 
 create or replace view public.participant_recording_counts
@@ -345,12 +421,46 @@ select
   participant_id,
   count(*)::integer as recording_count
 from public.recordings
+where exists (
+  select 1
+  from public.app_users u
+  where u.participant_id = recordings.participant_id
+    and u.active = true
+)
+and exists (
+  select 1
+  from public.prompt_bank p
+  where p.module_id = recordings.module_id
+    and p.prompt_id = recordings.sentence_id
+    and p.active = true
+)
 group by participant_id;
+
+create or replace view public.active_recordings
+with (security_invoker = true)
+as
+select r.*
+from public.recordings r
+where exists (
+  select 1
+  from public.app_users u
+  where u.participant_id = r.participant_id
+    and u.active = true
+)
+and exists (
+  select 1
+  from public.prompt_bank p
+  where p.module_id = r.module_id
+    and p.prompt_id = r.sentence_id
+    and p.active = true
+);
 
 revoke all on public.prompt_recording_counts from anon, authenticated;
 revoke all on public.participant_recording_counts from anon, authenticated;
+revoke all on public.active_recordings from anon, authenticated;
 grant select on public.prompt_recording_counts to service_role;
 grant select on public.participant_recording_counts to service_role;
+grant select on public.active_recordings to service_role;
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -420,6 +530,54 @@ begin
   if not exists (
     select 1
     from pg_trigger
+    where tgname = 'visual_genome_images_set_updated_at'
+      and tgrelid = 'public.visual_genome_images'::regclass
+  ) then
+    create trigger visual_genome_images_set_updated_at
+    before update on public.visual_genome_images
+    for each row
+    execute function public.set_updated_at();
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_trigger
+    where tgname = 'visual_genome_translations_set_updated_at'
+      and tgrelid = 'public.visual_genome_translations'::regclass
+  ) then
+    create trigger visual_genome_translations_set_updated_at
+    before update on public.visual_genome_translations
+    for each row
+    execute function public.set_updated_at();
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_trigger
+    where tgname = 'visual_genome_descriptions_set_updated_at'
+      and tgrelid = 'public.visual_genome_descriptions'::regclass
+  ) then
+    create trigger visual_genome_descriptions_set_updated_at
+    before update on public.visual_genome_descriptions
+    for each row
+    execute function public.set_updated_at();
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_trigger
     where tgname = 'app_users_set_updated_at'
       and tgrelid = 'public.app_users'::regclass
   ) then
@@ -468,6 +626,9 @@ alter table public.admin_accounts enable row level security;
 alter table public.admin_activity_logs enable row level security;
 alter table public.prompt_bank enable row level security;
 alter table public.prompt_correction_reviews enable row level security;
+alter table public.visual_genome_images enable row level security;
+alter table public.visual_genome_descriptions enable row level security;
+alter table public.visual_genome_translations enable row level security;
 alter table public.research_tasks enable row level security;
 alter table public.contributions enable row level security;
 

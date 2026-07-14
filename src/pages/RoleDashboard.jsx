@@ -6,12 +6,14 @@ import {
   createContribution,
   getResearcherTasks,
   getUserContributions,
+  getVisualGenomeTasks,
+  submitVisualGenomeTranslation,
   updateResearcherTask,
 } from "../utils/userApi";
 import { getRoleLabel, normalizeUserRole, USER_ROLES } from "../utils/roles";
 
 const contentTypes = ["Audio Link", "Video Link"];
-const researcherTypes = ["Interview", "Focus Group", "Monologue", "Conversation"];
+const researcherTypes = ["Interview", "Focus Group", "Monologue", "Conversation", "Folk Tales", "Sadaf Munshi"];
 
 const initialContentForm = {
   contentType: contentTypes[0],
@@ -77,7 +79,11 @@ function ResearchTaskCard({ task, participantId, onUpdated }) {
           {task.recording.audioUrl && <audio className="w-full" controls src={task.recording.audioUrl} />}
         </div>
       ) : (
-        task.sourceText && <p className="rounded-lg bg-neutral-950 p-4 text-sm text-neutral-300">{task.sourceText}</p>
+        task.sourceText && (
+          <p className="rounded-lg bg-neutral-950 p-4 text-sm text-neutral-300">
+            {task.sourceText}
+          </p>
+        )
       )}
 
       {task.instructions && (
@@ -123,6 +129,71 @@ function ResearchTaskCard({ task, participantId, onUpdated }) {
       )}
       {task.status === "review" && <p className="text-sm text-yellow-300">Submitted and waiting for admin review.</p>}
       {completed && <p className="text-sm text-emerald-300">Completed and approved.</p>}
+    </article>
+  );
+}
+
+function VisualGenomeTaskCard({ task, participantId, onUpdated }) {
+  const [draft, setDraft] = useState({
+    translation: task.response?.translation || "",
+    notes: task.response?.notes || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const submitted = Boolean(task.response);
+
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await submitVisualGenomeTranslation(task.id, participantId, draft);
+      onUpdated(updated);
+    } catch (err) {
+      setError(err.message || "Unable to save VisualGenomeDB translation.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <article className="space-y-4 rounded-xl border border-neutral-800 bg-neutral-900 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-white">VisualGenomeDB translation</h3>
+          <p className="mt-1 text-sm text-neutral-400">Translate the description into your dialect.</p>
+        </div>
+        <StatusBadge status={submitted ? "submitted" : "pending"} />
+      </div>
+
+      <p className="rounded-lg bg-neutral-950 p-4 text-sm text-neutral-300">{task.description}</p>
+
+      <label className="block space-y-2">
+        <FieldLabel>Burushaski translation</FieldLabel>
+        <textarea
+          className="min-h-36 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-white"
+          value={draft.translation}
+          onChange={(event) => setDraft({ ...draft, translation: event.target.value })}
+        />
+      </label>
+
+      <label className="block space-y-2">
+        <FieldLabel>Notes (optional)</FieldLabel>
+        <textarea
+          className="min-h-24 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-white"
+          value={draft.notes}
+          onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
+        />
+      </label>
+
+      {error && <p className="text-sm text-red-300">{error}</p>}
+      <button
+        type="button"
+        disabled={saving || !draft.translation.trim()}
+        onClick={save}
+        className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-50"
+      >
+        {saving ? "Saving..." : submitted ? "Update translation" : "Submit translation"}
+      </button>
     </article>
   );
 }
@@ -375,8 +446,11 @@ function ContentContributorDashboard({ user, role, onBack }) {
 function ResearcherDashboard({ user, role, onLogout, onBackToVolunteer }) {
   const [form, setForm] = useState(initialResearcherForm);
   const [tasks, setTasks] = useState([]);
+  const [visualGenomeTasks, setVisualGenomeTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(true);
+  const [visualGenomeLoading, setVisualGenomeLoading] = useState(true);
   const [tasksError, setTasksError] = useState("");
+  const [visualGenomeError, setVisualGenomeError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const { contributions, setContributions, loading, error, setError } =
@@ -384,16 +458,37 @@ function ResearcherDashboard({ user, role, onLogout, onBackToVolunteer }) {
 
   useEffect(() => {
     let active = true;
-    getResearcherTasks(user.participantId)
-      .then((rows) => {
-        if (active) setTasks(rows);
-      })
-      .catch((err) => {
-        if (active) setTasksError(err.message || "Unable to load assigned tasks.");
-      })
-      .finally(() => {
-        if (active) setTasksLoading(false);
-      });
+
+    async function loadResearcherWork() {
+      setTasksLoading(true);
+      setVisualGenomeLoading(true);
+      setTasksError("");
+      setVisualGenomeError("");
+
+      try {
+        const [assignedRows, visualGenomeRows] = await Promise.all([
+          getResearcherTasks(user.participantId),
+          getVisualGenomeTasks(user.participantId),
+        ]);
+
+        if (active) {
+          setTasks(assignedRows);
+          setVisualGenomeTasks(visualGenomeRows);
+        }
+      } catch (err) {
+        if (active) {
+          setTasksError(err.message || "Unable to load assigned tasks.");
+          setVisualGenomeError(err.message || "Unable to load VisualGenomeDB tasks.");
+        }
+      } finally {
+        if (active) {
+          setTasksLoading(false);
+          setVisualGenomeLoading(false);
+        }
+      }
+    }
+
+    loadResearcherWork();
     return () => {
       active = false;
     };
@@ -441,6 +536,30 @@ function ResearcherDashboard({ user, role, onLogout, onBackToVolunteer }) {
           Back to volunteer tasks
         </button>
       </div>
+
+      <section className="space-y-4 rounded-lg border border-neutral-800 bg-neutral-900 p-5">
+        <div>
+          <h2 className="font-semibold text-yellow-400">VisualGenomeDB</h2>
+          <p className="mt-1 text-sm text-neutral-400">Translate active text descriptions into your dialect.</p>
+        </div>
+        {visualGenomeLoading && <p className="text-sm text-neutral-400">Loading VisualGenomeDB prompts...</p>}
+        {visualGenomeError && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{visualGenomeError}</p>}
+        {!visualGenomeLoading && !visualGenomeError && !visualGenomeTasks.length && (
+          <p className="rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">
+            No VisualGenomeDB prompts are active right now.
+          </p>
+        )}
+        <div className="space-y-4">
+          {visualGenomeTasks.map((task) => (
+            <VisualGenomeTaskCard
+              key={task.id}
+              task={task}
+              participantId={user.participantId}
+              onUpdated={(updated) => setVisualGenomeTasks((current) => current.map((item) => item.id === updated.id ? updated : item))}
+            />
+          ))}
+        </div>
+      </section>
 
       {tasksLoading && <p className="text-sm text-neutral-400">Loading assigned tasks...</p>}
       {tasksError && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{tasksError}</p>}

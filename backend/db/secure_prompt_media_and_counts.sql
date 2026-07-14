@@ -21,6 +21,19 @@ select
   sentence_id as prompt_id,
   count(*)::integer as recording_count
 from public.recordings
+where exists (
+  select 1
+  from public.app_users u
+  where u.participant_id = recordings.participant_id
+    and u.active = true
+)
+and exists (
+  select 1
+  from public.prompt_bank p
+  where p.module_id = recordings.module_id
+    and p.prompt_id = recordings.sentence_id
+    and p.active = true
+)
 group by module_id, sentence_id;
 
 create or replace view public.participant_recording_counts
@@ -30,12 +43,46 @@ select
   participant_id,
   count(*)::integer as recording_count
 from public.recordings
+where exists (
+  select 1
+  from public.app_users u
+  where u.participant_id = recordings.participant_id
+    and u.active = true
+)
+and exists (
+  select 1
+  from public.prompt_bank p
+  where p.module_id = recordings.module_id
+    and p.prompt_id = recordings.sentence_id
+    and p.active = true
+)
 group by participant_id;
+
+create or replace view public.active_recordings
+with (security_invoker = true)
+as
+select r.*
+from public.recordings r
+where exists (
+  select 1
+  from public.app_users u
+  where u.participant_id = r.participant_id
+    and u.active = true
+)
+and exists (
+  select 1
+  from public.prompt_bank p
+  where p.module_id = r.module_id
+    and p.prompt_id = r.sentence_id
+    and p.active = true
+);
 
 revoke all on public.prompt_recording_counts from anon, authenticated;
 revoke all on public.participant_recording_counts from anon, authenticated;
+revoke all on public.active_recordings from anon, authenticated;
 grant select on public.prompt_recording_counts to service_role;
 grant select on public.participant_recording_counts to service_role;
+grant select on public.active_recordings to service_role;
 
 update storage.buckets
 set public = false
