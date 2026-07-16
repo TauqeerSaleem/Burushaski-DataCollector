@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useUser } from "../context/UserContext";
 import Dashboard from "./Dashboard";
@@ -7,7 +7,7 @@ import {
   getResearcherTasks,
   getUserContributions,
   getVisualGenomeTasks,
-  submitVisualGenomeTranslation,
+  submitVisualGenomeResponse,
   updateResearcherTask,
 } from "../utils/userApi";
 import { getRoleLabel, normalizeUserRole, USER_ROLES } from "../utils/roles";
@@ -29,6 +29,8 @@ const initialResearcherForm = {
   turnTakingNotes: "",
   languageNotes: "",
 };
+
+const MAX_RECORDING_MS = 5 * 60 * 1000;
 
 function ResearchTaskCard({ task, participantId, onUpdated }) {
   const [draft, setDraft] = useState({
@@ -135,21 +137,105 @@ function ResearchTaskCard({ task, participantId, onUpdated }) {
 
 function VisualGenomeTaskCard({ task, participantId, onUpdated }) {
   const [draft, setDraft] = useState({
-    translation: task.response?.translation || "",
+    transcript: task.response?.transcript || "",
     notes: task.response?.notes || "",
   });
+  const [audioBlob, setAudioBlob] = useState(null);
+  const [audioUrl, setAudioUrl] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [recordingMessage, setRecordingMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const streamRef = useRef(null);
+  const recordingLimitTimerRef = useRef(null);
+  const recordingStartedAtRef = useRef(null);
+  const recordingDurationMsRef = useRef(task.response?.audioDurationMs || 0);
   const submitted = Boolean(task.response);
+
+  useEffect(() => () => {
+    if (recordingLimitTimerRef.current) clearTimeout(recordingLimitTimerRef.current);
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+  }, [audioUrl]);
+
+  const startRecording = async () => {
+    setError("");
+    setRecordingMessage("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      chunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        if (audioUrl) URL.revokeObjectURL(audioUrl);
+        setAudioBlob(blob);
+        setAudioUrl(URL.createObjectURL(blob));
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      };
+
+      mediaRecorder.start();
+      recordingStartedAtRef.current = Date.now();
+      recordingDurationMsRef.current = 0;
+      setRecording(true);
+      recordingLimitTimerRef.current = setTimeout(() => {
+        recordingLimitTimerRef.current = null;
+        recordingDurationMsRef.current = MAX_RECORDING_MS;
+        setRecordingMessage("Recording stopped at the 5-minute limit. Listen back, transcribe it, then submit.");
+        stopRecording();
+      }, MAX_RECORDING_MS);
+    } catch {
+      setError("Microphone access denied. Please allow microphone access and try again.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (recordingLimitTimerRef.current) {
+      clearTimeout(recordingLimitTimerRef.current);
+      recordingLimitTimerRef.current = null;
+    }
+    if (!recordingDurationMsRef.current && recordingStartedAtRef.current) {
+      recordingDurationMsRef.current = Math.min(Date.now() - recordingStartedAtRef.current, MAX_RECORDING_MS);
+    }
+    mediaRecorderRef.current?.stop();
+    setRecording(false);
+  };
+
+  const clearRecording = () => {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioBlob(null);
+    setAudioUrl("");
+    setRecordingMessage("");
+    recordingStartedAtRef.current = null;
+    recordingDurationMsRef.current = task.response?.audioDurationMs || 0;
+  };
 
   const save = async () => {
     setSaving(true);
     setError("");
     try {
-      const updated = await submitVisualGenomeTranslation(task.id, participantId, draft);
+      if (!audioBlob) {
+        throw new Error("Record and listen back to your response before submitting.");
+      }
+      const updated = await submitVisualGenomeResponse(task.id, participantId, {
+        ...draft,
+        audioBlob,
+        durationMs: recordingDurationMsRef.current,
+      });
       onUpdated(updated);
+      clearRecording();
     } catch (err) {
-      setError(err.message || "Unable to save VisualGenomeDB translation.");
+      setError(err.message || "Unable to save Visual Genome response.");
     } finally {
       setSaving(false);
     }
@@ -159,20 +245,43 @@ function VisualGenomeTaskCard({ task, participantId, onUpdated }) {
     <article className="space-y-4 rounded-xl border border-neutral-800 bg-neutral-900 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="font-semibold text-white">VisualGenomeDB translation</h3>
-          <p className="mt-1 text-sm text-neutral-400">Translate the description into your dialect.</p>
+          <h3 className="font-semibold text-white">Visual Genome audio response</h3>
+          <p className="mt-1 text-sm text-neutral-400">Say the description in your dialect, listen back, then transcribe it.</p>
         </div>
         <StatusBadge status={submitted ? "submitted" : "pending"} />
       </div>
 
       <p className="rounded-lg bg-neutral-950 p-4 text-sm text-neutral-300">{task.description}</p>
 
+      <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+        <div className="flex flex-wrap gap-2">
+          {!recording ? (
+            <button type="button" onClick={startRecording} className="rounded bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-600">
+              {audioBlob ? "Record again" : "Start recording"}
+            </button>
+          ) : (
+            <button type="button" onClick={stopRecording} className="rounded bg-neutral-700 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-600">
+              Stop recording
+            </button>
+          )}
+          {audioBlob && (
+            <button type="button" onClick={clearRecording} className="rounded border border-neutral-700 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800">
+              Clear recording
+            </button>
+          )}
+        </div>
+        {recordingMessage && <p className="text-sm text-yellow-300">{recordingMessage}</p>}
+        {(audioUrl || task.response?.audioUrl) && (
+          <audio className="w-full" controls src={audioUrl || task.response.audioUrl} />
+        )}
+      </div>
+
       <label className="block space-y-2">
-        <FieldLabel>Burushaski translation</FieldLabel>
+        <FieldLabel>Transcription of your recording</FieldLabel>
         <textarea
           className="min-h-36 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-white"
-          value={draft.translation}
-          onChange={(event) => setDraft({ ...draft, translation: event.target.value })}
+          value={draft.transcript}
+          onChange={(event) => setDraft({ ...draft, transcript: event.target.value })}
         />
       </label>
 
@@ -188,11 +297,11 @@ function VisualGenomeTaskCard({ task, participantId, onUpdated }) {
       {error && <p className="text-sm text-red-300">{error}</p>}
       <button
         type="button"
-        disabled={saving || !draft.translation.trim()}
+        disabled={saving || recording || !audioBlob || !draft.transcript.trim()}
         onClick={save}
         className="rounded bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:opacity-50"
       >
-        {saving ? "Saving..." : submitted ? "Update translation" : "Submit translation"}
+        {saving ? "Saving..." : submitted ? "Submit updated response" : "Submit response"}
       </button>
     </article>
   );
@@ -447,6 +556,7 @@ function ResearcherDashboard({ user, role, onLogout, onBackToVolunteer }) {
   const [form, setForm] = useState(initialResearcherForm);
   const [tasks, setTasks] = useState([]);
   const [visualGenomeTasks, setVisualGenomeTasks] = useState([]);
+  const [showVisualGenomeWorkspace, setShowVisualGenomeWorkspace] = useState(false);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [visualGenomeLoading, setVisualGenomeLoading] = useState(true);
   const [tasksError, setTasksError] = useState("");
@@ -478,7 +588,7 @@ function ResearcherDashboard({ user, role, onLogout, onBackToVolunteer }) {
       } catch (err) {
         if (active) {
           setTasksError(err.message || "Unable to load assigned tasks.");
-          setVisualGenomeError(err.message || "Unable to load VisualGenomeDB tasks.");
+          setVisualGenomeError(err.message || "Unable to load Visual Genome tasks.");
         }
       } finally {
         if (active) {
@@ -520,6 +630,54 @@ function ResearcherDashboard({ user, role, onLogout, onBackToVolunteer }) {
     }
   }
 
+  const visualGenomeSubmittedCount = visualGenomeTasks.filter((task) => task.response).length;
+  const visualGenomePendingCount = Math.max(visualGenomeTasks.length - visualGenomeSubmittedCount, 0);
+
+  if (showVisualGenomeWorkspace) {
+    return (
+      <DashboardShell
+        role={role}
+        title="Visual Genome Tasks"
+        description="Record each image description in your dialect, listen back, and transcribe what you said."
+        onLogout={onLogout}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+          <div>
+            <h2 className="font-semibold text-white">Visual Genome</h2>
+            <p className="text-sm text-neutral-400">
+              {visualGenomePendingCount} pending · {visualGenomeSubmittedCount} submitted
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowVisualGenomeWorkspace(false)}
+            className="rounded-lg border border-neutral-700 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800"
+          >
+            Back to researcher dashboard
+          </button>
+        </div>
+
+        {visualGenomeLoading && <p className="text-sm text-neutral-400">Loading Visual Genome prompts...</p>}
+        {visualGenomeError && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{visualGenomeError}</p>}
+        {!visualGenomeLoading && !visualGenomeError && !visualGenomeTasks.length && (
+          <p className="rounded-lg border border-neutral-800 bg-neutral-900 p-5 text-sm text-neutral-400">
+            No Visual Genome prompts are active right now.
+          </p>
+        )}
+        <div className="space-y-4">
+          {visualGenomeTasks.map((task) => (
+            <VisualGenomeTaskCard
+              key={task.id}
+              task={task}
+              participantId={user.participantId}
+              onUpdated={(updated) => setVisualGenomeTasks((current) => current.map((item) => item.id === updated.id ? updated : item))}
+            />
+          ))}
+        </div>
+      </DashboardShell>
+    );
+  }
+
   return (
     <DashboardShell
       role={role}
@@ -537,28 +695,25 @@ function ResearcherDashboard({ user, role, onLogout, onBackToVolunteer }) {
         </button>
       </div>
 
-      <section className="space-y-4 rounded-lg border border-neutral-800 bg-neutral-900 p-5">
-        <div>
-          <h2 className="font-semibold text-yellow-400">VisualGenomeDB</h2>
-          <p className="mt-1 text-sm text-neutral-400">Translate active text descriptions into your dialect.</p>
-        </div>
-        {visualGenomeLoading && <p className="text-sm text-neutral-400">Loading VisualGenomeDB prompts...</p>}
-        {visualGenomeError && <p className="rounded bg-red-950 px-3 py-2 text-sm text-red-200">{visualGenomeError}</p>}
-        {!visualGenomeLoading && !visualGenomeError && !visualGenomeTasks.length && (
-          <p className="rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">
-            No VisualGenomeDB prompts are active right now.
+      <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-neutral-800 bg-neutral-900 p-5">
+        <div className="space-y-1">
+          <h2 className="font-semibold text-yellow-400">Visual Genome</h2>
+          <p className="text-sm text-neutral-400">
+            {visualGenomeLoading
+              ? "Checking active prompts..."
+              : visualGenomeError
+                ? "Unable to load task counts right now."
+                : `${visualGenomePendingCount} pending · ${visualGenomeSubmittedCount} submitted`}
           </p>
-        )}
-        <div className="space-y-4">
-          {visualGenomeTasks.map((task) => (
-            <VisualGenomeTaskCard
-              key={task.id}
-              task={task}
-              participantId={user.participantId}
-              onUpdated={(updated) => setVisualGenomeTasks((current) => current.map((item) => item.id === updated.id ? updated : item))}
-            />
-          ))}
         </div>
+        <button
+          type="button"
+          onClick={() => setShowVisualGenomeWorkspace(true)}
+          disabled={visualGenomeLoading || Boolean(visualGenomeError)}
+          className="rounded-lg bg-yellow-400 px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Open Visual Genome tasks
+        </button>
       </section>
 
       {tasksLoading && <p className="text-sm text-neutral-400">Loading assigned tasks...</p>}

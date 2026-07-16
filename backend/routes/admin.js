@@ -182,6 +182,22 @@ async function signedPromptMediaUrl(value) {
   return data?.signedUrl || "";
 }
 
+async function signedAudioRecordingUrl(value) {
+  const path = cleanText(value);
+  if (!path) return "";
+
+  const { data, error } = await supabase.storage
+    .from("audio-recordings")
+    .createSignedUrl(path, 60 * 60);
+
+  if (error) {
+    console.error("Audio recording signing failed:", error.message);
+    return "";
+  }
+
+  return data?.signedUrl || "";
+}
+
 async function signPromptRows(rows) {
   return Promise.all(
     (rows || []).map(async (row) => {
@@ -508,7 +524,11 @@ function visualGenomeResponseToClient(row) {
     regionY: region.y ?? "",
     regionWidth: region.width ?? "",
     regionHeight: region.height ?? "",
-    translation: row.translation || "",
+    transcript: row.transcript || "",
+    audioPath: row.audio_path || "",
+    audioUrl: row.signed_audio_url || "",
+    audioMimeType: row.audio_mime_type || "",
+    audioDurationMs: row.audio_duration_ms || 0,
     notes: row.notes || "",
     status: row.status || "submitted",
     createdAt: row.created_at,
@@ -524,7 +544,11 @@ function researcherVisualGenomePromptToClient(row, response = null) {
     response: response
       ? {
           id: response.id,
-          translation: response.translation || "",
+          transcript: response.transcript || "",
+          audioPath: response.audio_path || "",
+          audioUrl: response.signed_audio_url || "",
+          audioMimeType: response.audio_mime_type || "",
+          audioDurationMs: response.audio_duration_ms || 0,
           notes: response.notes || "",
           status: response.status || "submitted",
           createdAt: response.created_at,
@@ -2678,12 +2702,15 @@ router.get("/admin/visual-genome-responses", requireAdmin, async (req, res) => {
 
     const rows = await fetchAllRows(() =>
       supabase
-        .from("visual_genome_translations")
+        .from("visual_genome_responses")
         .select(`
           id,
           description_id,
           researcher_id,
-          translation,
+          transcript,
+          audio_path,
+          audio_mime_type,
+          audio_duration_ms,
           notes,
           status,
           created_at,
@@ -2705,7 +2732,14 @@ router.get("/admin/visual-genome-responses", requireAdmin, async (req, res) => {
         .order("updated_at", { ascending: false })
     );
 
-    res.json({ responses: rows.map(visualGenomeResponseToClient) });
+    const signedRows = await Promise.all(
+      rows.map(async (row) => ({
+        ...row,
+        signed_audio_url: await signedAudioRecordingUrl(row.audio_path),
+      }))
+    );
+
+    res.json({ responses: signedRows.map(visualGenomeResponseToClient) });
   } catch (error) {
     console.error("Admin VisualGenomeDB responses failed:", error.message);
     res.status(500).json({ error: "Unable to load VisualGenomeDB responses." });
@@ -3124,13 +3158,19 @@ router.get("/researcher/visual-genome-tasks", async (req, res) => {
       ),
       fetchAllRows(() =>
         supabase
-          .from("visual_genome_translations")
-          .select("id, description_id, translation, notes, status, created_at, updated_at")
+          .from("visual_genome_responses")
+          .select("id, description_id, transcript, audio_path, audio_mime_type, audio_duration_ms, notes, status, created_at, updated_at")
           .eq("researcher_id", researcher.id)
       ),
     ]);
 
-    const responseMap = new Map((responsesResult || []).map((row) => [row.description_id, row]));
+    const signedResponses = await Promise.all(
+      (responsesResult || []).map(async (row) => ({
+        ...row,
+        signed_audio_url: await signedAudioRecordingUrl(row.audio_path),
+      }))
+    );
+    const responseMap = new Map(signedResponses.map((row) => [row.description_id, row]));
     res.json({
       tasks: (promptsResult || []).map((row) => researcherVisualGenomePromptToClient(row, responseMap.get(row.id))),
     });
@@ -3140,19 +3180,36 @@ router.get("/researcher/visual-genome-tasks", async (req, res) => {
   }
 });
 
-router.patch("/researcher/visual-genome-tasks/:id", async (req, res) => {
+router.patch(
+  "/researcher/visual-genome-tasks/:id",
+  express.raw({ type: Array.from(ALLOWED_RECORDING_TYPES), limit: MAX_RECORDING_BYTES }),
+  async (req, res) => {
   try {
     if (!requireServiceRole(res)) return;
 
-    const participantId = cleanText(req.body.participantId);
+    const contentType = cleanMimeType(req.get("content-type"), "audio/webm");
+    if (!ALLOWED_RECORDING_TYPES.has(contentType)) {
+      return res.status(415).json({ error: "Unsupported VisualGenomeDB audio format." });
+    }
+
+    if (!req.body || req.body.length === 0) {
+      return res.status(400).json({ error: "Record your response before submitting." });
+    }
+
+    const participantId = cleanText(req.get("x-participant-id"));
     if (!participantId) return res.status(400).json({ error: "Participant ID is required." });
 
     const researcher = await requireActiveResearcherByParticipantId(participantId, res);
     if (!researcher) return;
 
-    const translation = cleanText(req.body.translation);
-    const notes = req.body.notes !== undefined ? cleanText(req.body.notes) : null;
-    if (!translation) return res.status(400).json({ error: "Translation is required." });
+    const transcript = cleanHeaderText(req.get("x-transcript"), 8000);
+    const notes = cleanHeaderText(req.get("x-notes"), 4000);
+    const recordingDurationMs = cleanInteger(req.get("x-recording-duration-ms"), 0, 0);
+
+    if (!transcript) return res.status(400).json({ error: "Transcribe your recording before submitting." });
+    if (recordingDurationMs > MAX_RECORDING_MS + 1000) {
+      return res.status(413).json({ error: "VisualGenomeDB responses must be 5 minutes or shorter." });
+    }
 
     const { data: prompt, error: promptError } = await supabase
       .from("visual_genome_descriptions")
@@ -3163,28 +3220,67 @@ router.patch("/researcher/visual-genome-tasks/:id", async (req, res) => {
     if (promptError) throw promptError;
     if (!prompt || prompt.active === false) return res.status(404).json({ error: "VisualGenomeDB prompt not found." });
 
+    const extension = recordingExtension(contentType);
+    const dialect = cleanDialect(researcher.dialect) || "unknown";
+    const filePath = `${dialect}/${participantId}/visual-genome/${prompt.id}/${Date.now()}-${cryptoRandomId()}.${extension}`;
+
+    const { data: existingResponse, error: existingError } = await supabase
+      .from("visual_genome_responses")
+      .select("audio_path")
+      .eq("description_id", prompt.id)
+      .eq("researcher_id", researcher.id)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+
+    const { error: uploadError } = await supabase.storage
+      .from("audio-recordings")
+      .upload(filePath, req.body, {
+        contentType,
+        upsert: false,
+      });
+
+    if (uploadError) throw uploadError;
+
     const now = new Date().toISOString();
     const { data: response, error } = await supabase
-      .from("visual_genome_translations")
+      .from("visual_genome_responses")
       .upsert(
         {
           description_id: prompt.id,
           researcher_id: researcher.id,
-          translation,
+          transcript,
+          audio_path: filePath,
+          audio_mime_type: contentType,
+          audio_duration_ms: recordingDurationMs,
           notes,
           status: "submitted",
           updated_at: now,
         },
         { onConflict: "description_id,researcher_id" }
       )
-      .select("id, description_id, translation, notes, status, created_at, updated_at")
+      .select("id, description_id, transcript, audio_path, audio_mime_type, audio_duration_ms, notes, status, created_at, updated_at")
       .single();
 
-    if (error) throw error;
-    res.json({ task: researcherVisualGenomePromptToClient(prompt, response) });
+    if (error) {
+      await supabase.storage.from("audio-recordings").remove([filePath]);
+      throw error;
+    }
+
+    if (existingResponse?.audio_path && existingResponse.audio_path !== filePath) {
+      const { error: removeError } = await supabase.storage.from("audio-recordings").remove([existingResponse.audio_path]);
+      if (removeError) console.error("Old VisualGenomeDB audio cleanup failed:", removeError.message);
+    }
+
+    res.json({
+      task: researcherVisualGenomePromptToClient(prompt, {
+        ...response,
+        signed_audio_url: await signedAudioRecordingUrl(response.audio_path),
+      }),
+    });
   } catch (error) {
     console.error("Researcher VisualGenomeDB update failed:", error.message);
-    res.status(500).json({ error: "Unable to save VisualGenomeDB translation." });
+    res.status(500).json({ error: "Unable to save VisualGenomeDB response." });
   }
 });
 

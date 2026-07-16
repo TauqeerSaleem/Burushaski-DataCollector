@@ -193,17 +193,21 @@ create table if not exists public.visual_genome_descriptions (
   unique (region_id, description)
 );
 
-create table if not exists public.visual_genome_translations (
+create table if not exists public.visual_genome_responses (
   id uuid primary key default gen_random_uuid(),
   description_id uuid not null references public.visual_genome_descriptions(id) on delete cascade,
   researcher_id uuid not null references public.app_users(id) on delete cascade,
-  translation text not null,
+  audio_path text not null,
+  audio_mime_type text,
+  audio_duration_ms integer,
+  transcript text not null,
   notes text,
   status text not null default 'submitted',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (description_id, researcher_id),
-  check (status in ('submitted', 'approved', 'needs_changes'))
+  check (status in ('submitted', 'approved', 'needs_changes')),
+  check (audio_duration_ms is null or audio_duration_ms >= 0)
 );
 
 do $$
@@ -404,10 +408,57 @@ create index if not exists visual_genome_descriptions_region_idx
 on public.visual_genome_descriptions (region_id);
 create index if not exists visual_genome_descriptions_active_idx
 on public.visual_genome_descriptions (active);
-create index if not exists visual_genome_translations_description_idx
-on public.visual_genome_translations (description_id);
-create index if not exists visual_genome_translations_researcher_idx
-on public.visual_genome_translations (researcher_id);
+create index if not exists visual_genome_responses_description_idx
+on public.visual_genome_responses (description_id);
+create index if not exists visual_genome_responses_researcher_idx
+on public.visual_genome_responses (researcher_id);
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'visual_genome_images_has_reference_chk'
+      and conrelid = 'public.visual_genome_images'::regclass
+  ) then
+    alter table public.visual_genome_images
+    add constraint visual_genome_images_has_reference_chk
+    check (file_name is not null or vg_image_id is not null or image_url is not null);
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'visual_genome_regions_image_region_uidx'
+      and conrelid = 'public.visual_genome_regions'::regclass
+  ) then
+    alter table public.visual_genome_regions
+    add constraint visual_genome_regions_image_region_uidx
+    unique (image_id, vg_region_id);
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'visual_genome_descriptions_region_description_uidx'
+      and conrelid = 'public.visual_genome_descriptions'::regclass
+  ) then
+    alter table public.visual_genome_descriptions
+    add constraint visual_genome_descriptions_region_description_uidx
+    unique (region_id, description);
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'visual_genome_responses_description_researcher_uidx'
+      and conrelid = 'public.visual_genome_responses'::regclass
+  ) then
+    alter table public.visual_genome_responses
+    add constraint visual_genome_responses_description_researcher_uidx
+    unique (description_id, researcher_id);
+  end if;
+end;
+$$;
 create index if not exists research_tasks_status_idx on public.research_tasks (status);
 create index if not exists research_tasks_assigned_idx on public.research_tasks (assigned_to);
 create index if not exists research_tasks_recording_idx on public.research_tasks (recording_id);
@@ -588,11 +639,11 @@ begin
   if not exists (
     select 1
     from pg_trigger
-    where tgname = 'visual_genome_translations_set_updated_at'
-      and tgrelid = 'public.visual_genome_translations'::regclass
+    where tgname = 'visual_genome_responses_set_updated_at'
+      and tgrelid = 'public.visual_genome_responses'::regclass
   ) then
-    create trigger visual_genome_translations_set_updated_at
-    before update on public.visual_genome_translations
+    create trigger visual_genome_responses_set_updated_at
+    before update on public.visual_genome_responses
     for each row
     execute function public.set_updated_at();
   end if;
@@ -671,7 +722,7 @@ alter table public.prompt_correction_reviews enable row level security;
 alter table public.visual_genome_images enable row level security;
 alter table public.visual_genome_regions enable row level security;
 alter table public.visual_genome_descriptions enable row level security;
-alter table public.visual_genome_translations enable row level security;
+alter table public.visual_genome_responses enable row level security;
 alter table public.research_tasks enable row level security;
 alter table public.contributions enable row level security;
 

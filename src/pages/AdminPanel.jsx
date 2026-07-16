@@ -951,7 +951,8 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
         researcherName: "",
         participantId: "",
         dialect: "",
-        translation: "",
+        transcript: "",
+        audioUrl: "",
       }));
 
     return [...activeResponses, ...pendingPromptRows];
@@ -962,7 +963,7 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
     return recordRows.filter((response) => {
       const researcher = response.researcherName || response.participantId || "";
       return (
-        matchesText(response, filters.search, ["description", "fileName", "vgImageId", "imageUrl", "researcherName", "participantId", "dialect", "translation"]) &&
+        matchesText(response, filters.search, ["description", "fileName", "vgImageId", "imageUrl", "researcherName", "participantId", "dialect", "transcript"]) &&
         (filters.dialect === "all" || response.dialect === filters.dialect) &&
         (filters.researcher === "all" || researcher === filters.researcher)
       );
@@ -1085,7 +1086,7 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
       <div className="grid gap-3 rounded-lg border border-neutral-800 bg-neutral-900/70 p-3 md:grid-cols-4">
         <label className="space-y-1 text-xs text-neutral-400 md:col-span-2">
           <span>Search records</span>
-          <input className="input-field" placeholder="Description, researcher, dialect, translation..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
+          <input className="input-field" placeholder="Description, researcher, dialect, transcript..." value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
         </label>
         <label className="space-y-1 text-xs text-neutral-400">
           <span>Researcher</span>
@@ -1115,7 +1116,8 @@ function VisualGenomeBank({ prompts, responses, onRefresh }) {
             { key: "fileName", label: "Image/file reference", sortable: true, render: (response) => response.fileName || response.vgImageId || response.imageUrl || "-" },
             { key: "researcherName", label: "Researcher", sortable: true, render: (response) => response.researcherName || response.participantId || "-" },
             { key: "dialect", label: "Dialect", sortable: true, render: (response) => dialectLabel(response.dialect) },
-            { key: "translation", label: "Translation", sortable: true, render: (response) => <span className="block max-w-md">{response.translation || "-"}</span> },
+            { key: "transcript", label: "Transcript", sortable: true, render: (response) => <span className="block max-w-md">{response.transcript || "-"}</span> },
+            { key: "audioUrl", label: "Audio", render: (response) => response.audioUrl ? <audio className="w-48" controls src={response.audioUrl} /> : "-" },
           ]}
           rows={sortedRecords}
           emptyText="No Visual Genome records match these filters."

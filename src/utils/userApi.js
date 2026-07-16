@@ -134,11 +134,24 @@ export async function getVisualGenomeTasks(participantId) {
   return data.tasks || [];
 }
 
-export async function submitVisualGenomeTranslation(id, participantId, payload) {
-  const data = await request(`/api/researcher/visual-genome-tasks/${encodeURIComponent(id)}`, {
+export async function submitVisualGenomeResponse(id, participantId, payload) {
+  const response = await fetch(`${API_BASE_URL}/api/researcher/visual-genome-tasks/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    body: JSON.stringify({ ...payload, participantId }),
+    headers: {
+      "Content-Type": payload.audioBlob?.type || "audio/webm",
+      "X-Participant-Id": participantId,
+      "X-Transcript": encodeURIComponent(payload.transcript || ""),
+      "X-Notes": encodeURIComponent(payload.notes || ""),
+      "X-Recording-Duration-Ms": String(payload.durationMs || 0),
+    },
+    body: payload.audioBlob,
   });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error || "VisualGenomeDB response failed");
+  }
 
   return data.task;
 }
