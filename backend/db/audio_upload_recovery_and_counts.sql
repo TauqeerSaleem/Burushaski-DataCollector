@@ -1,17 +1,15 @@
--- Apply after an older deploy_schema.sql run to make prompt media private
--- lock down count views, and add recording note columns. This is safe to rerun.
-
-alter table public.recordings
-add column if not exists transcript text;
-
-alter table public.recordings
-add column if not exists english_translation text;
-
-alter table public.recordings
-add column if not exists correction_flag boolean not null default false;
-
-alter table public.recordings
-add column if not exists suggested_correction text;
+-- Fix recording retry/count behavior without deleting any existing data.
+-- Safe to rerun.
+--
+-- Intended live-use order:
+-- 1. Run this file in Supabase after the current production schema.
+-- 2. Deploy the matching backend/frontend code.
+-- 3. Ask affected participants to reopen the app on the same device/browser
+--    while online so pending IndexedDB recordings can sync.
+--
+-- This patch does not move or delete storage objects. Remote audio remains in
+-- the private Supabase `audio-recordings` bucket, with object paths stored in
+-- public.recordings.audio_path.
 
 create or replace view public.prompt_recording_counts
 with (security_invoker = true)
@@ -102,6 +100,13 @@ grant select on public.participant_recording_counts to service_role;
 grant select on public.active_recordings to service_role;
 grant select on public.duplicate_recording_groups to service_role;
 
-update storage.buckets
-set public = false
-where id = 'prompt-media';
+do $$
+begin
+  if exists (select 1 from public.duplicate_recording_groups limit 1) then
+    raise notice 'Duplicate recording rows exist. Canonical views now dedupe counts, but recordings_one_per_prompt_uidx was not created.';
+  else
+    create unique index if not exists recordings_one_per_prompt_uidx
+    on public.recordings (participant_id, module_id, sentence_id);
+  end if;
+end;
+$$;

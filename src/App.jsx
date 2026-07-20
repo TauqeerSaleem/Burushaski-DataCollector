@@ -20,19 +20,35 @@ export default function App() {
   const { user } = useUser();
 
   useEffect(() => {
+    if (!user) return undefined;
+
+    const flushPending = () => {
+      if (!navigator.onLine) return;
+      syncPendingRecordings().catch((error) => {
+        console.error("Pending recording sync failed:", error);
+      });
+    };
+
     const handleOnline = () => {
-      console.log("🌐 Back online");
-      syncPendingRecordings(user);
+      console.log("Back online");
+      flushPending();
+    };
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") flushPending();
     };
 
     window.addEventListener("online", handleOnline);
+    window.addEventListener("focus", flushPending);
+    document.addEventListener("visibilitychange", handleVisible);
 
-    if (user) {
-      syncPendingRecordings(user);
-    }
+    flushPending();
+    const syncTimer = window.setInterval(flushPending, 30000);
 
     return () => {
       window.removeEventListener("online", handleOnline);
+      window.removeEventListener("focus", flushPending);
+      document.removeEventListener("visibilitychange", handleVisible);
+      window.clearInterval(syncTimer);
     };
   }, [user]);
 

@@ -21,9 +21,9 @@ select
   u.consent_accepted,
   u.active,
   u.created_at,
-  count(r.id)::integer as recording_count
+  count(distinct (r.module_id, r.sentence_id)) filter (where r.id is not null)::integer as recording_count
 from public.app_users u
-left join public.recordings r
+left join public.active_recordings r
   on r.participant_id = u.participant_id
 group by u.id
 order by u.created_at desc;
@@ -53,7 +53,7 @@ select
   count(v.id) filter (where v.vote = -1)::integer as validation_no,
   r.audio_path,
   r.created_at
-from public.recordings r
+from public.active_recordings r
 left join public.app_users u
   on u.participant_id = r.participant_id
 left join public.prompt_bank p
@@ -78,7 +78,7 @@ select
   r.dialect,
   v.created_at
 from public.validations v
-join public.recordings r
+join public.active_recordings r
   on r.id = v.recording_id
 left join public.app_users owner
   on owner.participant_id = r.participant_id
@@ -94,10 +94,10 @@ select
   p.prompt_type,
   p.dialect,
   p.active,
-  count(r.id)::integer as recording_count,
-  count(v.id)::integer as validation_count
+  count(distinct r.participant_id) filter (where r.id is not null)::integer as recording_count,
+  count(distinct v.id)::integer as validation_count
 from public.prompt_bank p
-left join public.recordings r
+left join public.active_recordings r
   on r.module_id = p.module_id
  and r.sentence_id = p.prompt_id
 left join public.validations v

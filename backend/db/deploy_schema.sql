@@ -474,7 +474,7 @@ as
 select
   module_id,
   sentence_id as prompt_id,
-  count(*)::integer as recording_count
+  count(distinct participant_id)::integer as recording_count
 from public.recordings
 where exists (
   select 1
@@ -496,7 +496,7 @@ with (security_invoker = true)
 as
 select
   participant_id,
-  count(*)::integer as recording_count
+  count(distinct (module_id, sentence_id))::integer as recording_count
 from public.recordings
 where exists (
   select 1
@@ -516,7 +516,7 @@ group by participant_id;
 create or replace view public.active_recordings
 with (security_invoker = true)
 as
-select r.*
+select distinct on (r.participant_id, r.module_id, r.sentence_id) r.*
 from public.recordings r
 where exists (
   select 1
@@ -530,14 +530,32 @@ and exists (
   where p.module_id = r.module_id
     and p.prompt_id = r.sentence_id
     and p.active = true
-);
+)
+order by r.participant_id, r.module_id, r.sentence_id, r.created_at, r.id;
+
+create or replace view public.duplicate_recording_groups
+with (security_invoker = true)
+as
+select
+  participant_id,
+  module_id,
+  sentence_id,
+  count(*)::integer as duplicate_count,
+  min(created_at) as first_created_at,
+  max(created_at) as last_created_at,
+  array_agg(id order by created_at, id) as recording_ids
+from public.recordings
+group by participant_id, module_id, sentence_id
+having count(*) > 1;
 
 revoke all on public.prompt_recording_counts from anon, authenticated;
 revoke all on public.participant_recording_counts from anon, authenticated;
 revoke all on public.active_recordings from anon, authenticated;
+revoke all on public.duplicate_recording_groups from anon, authenticated;
 grant select on public.prompt_recording_counts to service_role;
 grant select on public.participant_recording_counts to service_role;
 grant select on public.active_recordings to service_role;
+grant select on public.duplicate_recording_groups to service_role;
 
 create or replace function public.set_updated_at()
 returns trigger

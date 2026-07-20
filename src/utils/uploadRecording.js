@@ -75,17 +75,22 @@ export async function uploadRecording({
     body: JSON.stringify(metadata),
   });
 
-  const { error: storageError } = await supabase.storage
-    .from("audio-recordings")
-    .uploadToSignedUrl(intent.path, intent.token, blob, {
-      contentType: intent.contentType,
-    });
-
   const complete = () => apiJson("/api/recordings/complete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...metadata, path: intent.path }),
   });
+
+  if (intent.alreadyUploaded) {
+    const data = await complete();
+    return data.recording;
+  }
+
+  const { error: storageError } = await supabase.storage
+    .from("audio-recordings")
+    .uploadToSignedUrl(intent.path, intent.token, blob, {
+      contentType: intent.contentType,
+    });
 
   if (storageError) {
     // A mobile connection can drop after Storage accepted the bytes but before

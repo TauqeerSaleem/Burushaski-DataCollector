@@ -247,6 +247,20 @@ function cryptoRandomId() {
   return crypto.randomBytes(8).toString("hex");
 }
 
+async function storageObjectMetadata(bucket, path) {
+  const cleanPath = cleanText(path);
+  if (!cleanPath) return null;
+
+  const pathParts = cleanPath.split("/");
+  const fileName = pathParts.pop();
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .list(pathParts.join("/"), { search: fileName, limit: 2 });
+
+  if (error) throw error;
+  return (data || []).find((file) => file.name === fileName) || null;
+}
+
 function slugify(value, fallback = "admin") {
   const slug = String(value || "")
     .trim()
@@ -1143,12 +1157,12 @@ router.get("/volunteer-dashboard", async (req, res) => {
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true }),
       supabase
-        .from("recordings")
+        .from("active_recordings")
         .select("sentence_id")
         .eq("participant_id", participantId),
       supabase
-        .from("recordings")
-        .select("sentence_id"),
+        .from("active_recordings")
+        .select("participant_id, sentence_id"),
     ]);
 
     const error = [promptsResult, myRecordingsResult, allRecordingsResult]
@@ -1158,7 +1172,11 @@ router.get("/volunteer-dashboard", async (req, res) => {
     if (error) throw error;
 
     const globalCounts = {};
+    const logicalGlobalRecordings = new Set();
     (allRecordingsResult.data || []).forEach((recording) => {
+      const key = `${recording.participant_id}:${recording.sentence_id}`;
+      if (logicalGlobalRecordings.has(key)) return;
+      logicalGlobalRecordings.add(key);
       globalCounts[recording.sentence_id] = (globalCounts[recording.sentence_id] || 0) + 1;
     });
 
@@ -1235,15 +1253,17 @@ async function validateRecordingRequest(body, res) {
     return null;
   }
 
-  const { data: existing, error: existingError } = await supabase
+  const { data: existingRows, error: existingError } = await supabase
     .from("recordings")
     .select("*")
     .eq("participant_id", participantId)
     .eq("module_id", moduleId)
     .eq("sentence_id", sentenceId)
-    .maybeSingle();
+    .order("created_at", { ascending: true })
+    .limit(2);
 
   if (existingError) throw existingError;
+  const existing = existingRows?.[0] || null;
 
   const dialect = participantDialect || "unknown";
   const extension = recordingExtension(contentType);
@@ -1276,11 +1296,30 @@ router.post("/recordings/upload-intent", async (req, res) => {
       return res.status(409).json({ error: "This prompt has already been recorded by this volunteer." });
     }
 
+    const storedFile = await storageObjectMetadata("audio-recordings", validated.path);
+    if (storedFile) {
+      return res.json({
+        path: validated.path,
+        contentType: validated.contentType,
+        alreadyUploaded: true,
+      });
+    }
+
     const { data, error } = await supabase.storage
       .from("audio-recordings")
       .createSignedUploadUrl(validated.path, { upsert: false });
 
-    if (error) throw error;
+    if (error) {
+      const recoveredFile = await storageObjectMetadata("audio-recordings", validated.path);
+      if (recoveredFile) {
+        return res.json({
+          path: validated.path,
+          contentType: validated.contentType,
+          alreadyUploaded: true,
+        });
+      }
+      throw error;
+    }
     res.json({
       path: validated.path,
       token: data.token,
@@ -1312,14 +1351,7 @@ router.post("/recordings/complete", async (req, res) => {
       return res.status(400).json({ error: "Invalid recording storage path." });
     }
 
-    const pathParts = validated.path.split("/");
-    const fileName = pathParts.pop();
-    const { data: storedFiles, error: listError } = await supabase.storage
-      .from("audio-recordings")
-      .list(pathParts.join("/"), { search: fileName, limit: 2 });
-
-    if (listError) throw listError;
-    const storedFile = (storedFiles || []).find((file) => file.name === fileName);
+    const storedFile = await storageObjectMetadata("audio-recordings", validated.path);
     if (!storedFile) {
       return res.status(409).json({ error: "The audio file did not finish uploading. Please try again." });
     }
@@ -1427,19 +1459,24 @@ router.post(
       const participant = await requireActiveParticipant(participantId, res);
       if (!participant) return;
 
-      const { data: prompt, error: promptError } = await supabase
+      const { data: promptRows, error: promptError } = await supabase
         .from("prompt_bank")
         .select("active, dialect")
         .eq("module_id", moduleId)
-        .eq("prompt_id", sentenceId)
-        .maybeSingle();
+        .eq("prompt_id", sentenceId);
 
       if (promptError) throw promptError;
+      const participantDialect = cleanDialect(participant.dialect);
+      const prompt =
+        (promptRows || []).find(p => cleanDialect(p.dialect) === participantDialect) ||
+        (promptRows || []).find(p => !cleanDialect(p.dialect) || cleanDialect(p.dialect) === "all") ||
+        (promptRows || [])[0] ||
+        null;
+
       if (!prompt || prompt.active === false) {
         return res.status(409).json({ error: "This prompt is no longer active. Load another prompt and try again." });
       }
 
-      const participantDialect = cleanDialect(participant.dialect);
       const promptDialect = cleanDialect(prompt.dialect);
       if (promptDialect && promptDialect !== "all" && promptDialect !== participantDialect) {
         return res.status(403).json({ error: "This prompt is not assigned to the participant's dialect." });
@@ -1448,16 +1485,16 @@ router.post(
       const dialect = participantDialect || "unknown";
       const gender = cleanText(participant.gender);
 
-      const { data: existing, error: existingError } = await supabase
+      const { data: existingRows, error: existingError } = await supabase
         .from("recordings")
         .select("id")
         .eq("participant_id", participantId)
         .eq("module_id", moduleId)
         .eq("sentence_id", sentenceId)
-        .maybeSingle();
+        .limit(1);
 
       if (existingError) throw existingError;
-      if (existing) {
+      if (existingRows?.length) {
         return res.status(409).json({ error: "This prompt has already been recorded by this volunteer." });
       }
 
@@ -1726,20 +1763,19 @@ router.get("/admin/overview", requireAdmin, async (req, res) => {
       ),
       fetchAllRows(() =>
         supabase
-          .from("recordings")
+          .from("active_recordings")
           .select("id, participant_id, module_id, sentence_id, created_at")
           .order("created_at", { ascending: true })
       ),
       fetchAllRows(() => supabase.from("validations").select("recording_id")),
     ]);
 
-    const activeParticipantIds = new Set(users.map((user) => user.participant_id).filter(Boolean));
-    const activePromptKeys = new Set(prompts.map((prompt) => `${prompt.module_id}:${prompt.prompt_id}`));
-    const activeRecordings = recordings.filter(
-      (recording) =>
-        activeParticipantIds.has(recording.participant_id) &&
-        activePromptKeys.has(`${recording.module_id}:${recording.sentence_id}`)
-    );
+    const logicalRecordingMap = new Map();
+    (recordings || []).forEach((recording) => {
+      const key = `${recording.participant_id}:${recording.module_id}:${recording.sentence_id}`;
+      if (!logicalRecordingMap.has(key)) logicalRecordingMap.set(key, recording);
+    });
+    const activeRecordings = Array.from(logicalRecordingMap.values());
     const activeRecordingIds = new Set(activeRecordings.map((recording) => recording.id));
     const activeValidations = validations.filter((validation) => activeRecordingIds.has(validation.recording_id));
 
@@ -2361,7 +2397,7 @@ router.get("/admin/export/:type", requireAdmin, async (req, res) => {
 
     if (type === "recordings") {
       const { data, error } = await supabase
-        .from("recordings")
+        .from("active_recordings")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(EXPORT_LIMIT);
@@ -3469,9 +3505,11 @@ router.get("/validation-tasks", async (req, res) => {
       return res.status(403).json({ error: "Participant dialect does not match this request." });
     }
 
-    // Fetch recordings in volunteer's dialect, excluding their own
+    // Fetch canonical recordings in volunteer's dialect, excluding their own.
+    // The active_recordings view filters inactive users/prompts and collapses
+    // accidental duplicate participant/prompt rows for volunteer-facing tasks.
     const { data: recordings, error: rErr } = await supabase
-      .from("recordings")
+      .from("active_recordings")
       .select("id, participant_id, dialect, module_id, sentence_id, audio_path, validation_score, validation_weight")
       .eq("dialect", dialect)
       .neq("participant_id", participantId);
