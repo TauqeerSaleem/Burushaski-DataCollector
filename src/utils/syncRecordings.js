@@ -1,24 +1,31 @@
 import { db } from "../db/indexdb";
 import { uploadRecording } from "./uploadRecording";
 
-let syncInFlight = null;
+const syncInFlightByParticipant = new Map();
 
-export async function syncPendingRecordings() {
-  if (syncInFlight) return syncInFlight;
+export async function syncPendingRecordings(participantId = null) {
+  const syncKey = participantId || "__all__";
+  if (syncInFlightByParticipant.has(syncKey)) return syncInFlightByParticipant.get(syncKey);
   if (!navigator.onLine) return [];
 
-  syncInFlight = syncPendingRecordingsOnce().finally(() => {
-    syncInFlight = null;
+  const syncInFlight = syncPendingRecordingsOnce(participantId).finally(() => {
+    syncInFlightByParticipant.delete(syncKey);
   });
+  syncInFlightByParticipant.set(syncKey, syncInFlight);
 
   return syncInFlight;
 }
 
-async function syncPendingRecordingsOnce() {
-  const pending = await db.recordings
+async function syncPendingRecordingsOnce(participantId) {
+  let query = db.recordings
     .where("status")
-    .equals("pending")
-    .toArray();
+    .equals("pending");
+
+  if (participantId) {
+    query = query.and((recording) => recording.participantId === participantId);
+  }
+
+  const pending = await query.toArray();
 
   if (pending.length === 0) return [];
 

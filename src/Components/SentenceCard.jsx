@@ -3,6 +3,7 @@ import { db } from "../db/indexdb";
 import { useUser } from "../context/UserContext";
 import { useEffect, useRef, useState } from "react";
 import { syncPendingRecordings } from "../utils/syncRecordings";
+import { uploadRecording } from "../utils/uploadRecording";
 import FeedbackModal from "./FeedbackModal";
 
 const MAX_RECORDING_MS = 5 * 60 * 1000;
@@ -25,6 +26,8 @@ export default function SentenceCard({
   const [audioBlob, setAudioBlob] = useState(null);
   const [audioUrl, setAudioUrl] = useState(null);
   const [status, setStatus] = useState(null); // pending | synced
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const [showFeedback, setShowFeedback] = useState(false);
   const [recordingMessage, setRecordingMessage] = useState("");
   const recordingLimitTimerRef = useRef(null);
@@ -100,23 +103,54 @@ export default function SentenceCard({
   // 🎙 Submit recording
   const submit = async () => {
     if (!audioBlob || isRecorded) return;
+    setIsUploading(true);
+    setUploadError("");
 
-    await db.recordings.add({
+    const payload = {
       participantId: user.participantId,
       dialect: user.dialect,
+      gender: user.gender,
       moduleId,
       sentenceId: sentence.sentenceId,
-      audioBlob,
-      status: "pending",
+      transcript: "",
+      englishTranslation: "",
+      correctionFlag: false,
+      suggestedCorrection: "",
+      promptType: sentence.promptType,
       durationMs: recordingDurationMsRef.current,
-      createdAt: new Date(),
-    });
+    };
+
+    let localId;
+    try {
+      localId = await db.recordings.add({
+        ...payload,
+        audioBlob,
+        status: "pending",
+        createdAt: new Date(),
+      });
+    } catch (error) {
+      setUploadError(error.message || "Could not save the recording on this device.");
+      setIsUploading(false);
+      return;
+    }
 
     setStatus("pending");
     onSubmitted(sentence.sentenceId);
 
-    if (navigator.onLine) {
-      syncPendingRecordings(user);
+    if (!navigator.onLine) {
+      setIsUploading(false);
+      return;
+    }
+
+    try {
+      await uploadRecording({ blob: audioBlob, ...payload });
+      await db.recordings.update(localId, { status: "synced", syncedAt: new Date() });
+      setStatus("synced");
+    } catch (error) {
+      setUploadError(error.message || "Saved on this device. It will upload when the connection is stable.");
+      syncPendingRecordings(user.participantId).catch(() => {});
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -178,9 +212,10 @@ export default function SentenceCard({
             <div className="space-x-2">
               <button
                 onClick={submit}
+                disabled={isUploading}
                 className="px-3 py-1 bg-green-600 text-white rounded"
               >
-                Submit
+                {isUploading ? "Uploading..." : "Submit"}
               </button>
               <button
                 onClick={restart}
@@ -189,6 +224,7 @@ export default function SentenceCard({
                 Restart
               </button>
             </div>
+            {uploadError && <p className="text-sm text-yellow-700">{uploadError}</p>}
           </div>
         )}
 

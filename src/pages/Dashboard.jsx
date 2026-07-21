@@ -14,6 +14,7 @@ const MAX_RECORDING_MS = 5 * 60 * 1000;
 
 export default function Dashboard({ headerAction = null }) {
   const { user, setUser } = useUser();
+  const participantId = user?.participantId || "";
   const navigate = useNavigate();
   const { isRecording, startRecording, stopRecording, resetRecording } = useRecorder();
 
@@ -71,8 +72,12 @@ const load = async () => {
 
     // Merge server-recorded IDs with any pending local recordings so they
     // don't reappear as unrecorded prompts while waiting to sync
-    const pendingLocal = await db.recordings.where("status").equals("pending").toArray();
-    const pendingLocalIds = pendingLocal.map((r) => r.sentenceId);
+    const pendingLocal = await db.recordings
+      .where("status")
+      .equals("pending")
+      .and((recording) => recording.participantId === user.participantId)
+      .toArray();
+    const pendingLocalIds = pendingLocal.map((r) => r.sentenceId).filter(Boolean);
 
     setAllSentences(dashData.prompts || []);
     setRecordedIds([...new Set([...(dashData.recordedIds || []), ...pendingLocalIds])]);
@@ -82,7 +87,7 @@ const load = async () => {
     setGlobalValidationCounts(validationData.globalValidationCounts || {});
 
     // Attempt to flush any pending recordings in the background
-    syncPendingRecordings().catch(() => {});
+    syncPendingRecordings(participantId).catch(() => {});
   } catch (err) {
     setError(err.message || "Could not load recording prompts.");
   } finally {
@@ -91,7 +96,7 @@ const load = async () => {
 };
 
     load();
-  }, [user]);
+}, [participantId, user]);
 
   const pickNextCard = useCallback((currentPickCount) => {
     if (!allSentences) return;
@@ -128,10 +133,10 @@ const load = async () => {
   }, [showSavedLocally]);
 
   useEffect(() => {
-    const handleOnline = () => syncPendingRecordings().catch(() => {});
+    const handleOnline = () => syncPendingRecordings(participantId).catch(() => {});
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
-  }, []);
+  }, [participantId]);
 
   const handleValidationVote = async (vote) => {
   if (!currentCard || validationVoting) return;
