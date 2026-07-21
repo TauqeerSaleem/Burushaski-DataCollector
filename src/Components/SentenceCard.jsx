@@ -120,39 +120,39 @@ export default function SentenceCard({
       durationMs: recordingDurationMsRef.current,
     };
 
-    let localId;
     try {
-      localId = await db.recordings.add({
-        ...payload,
-        audioBlob,
-        status: navigator.onLine ? "uploading" : "pending",
-        lastAttemptAt: navigator.onLine ? new Date() : undefined,
-        createdAt: new Date(),
-      });
+      if (navigator.onLine) {
+        await uploadRecording({ blob: audioBlob, ...payload });
+        setStatus("synced");
+      } else {
+        throw new Error("No internet connection. Recording saved on this device.");
+      }
+      onSubmitted(sentence.sentenceId);
     } catch (error) {
-      setUploadError(error.message || "Could not save the recording on this device.");
-      setIsUploading(false);
-      return;
-    }
+      if (error.status === 409) {
+        setStatus("synced");
+        onSubmitted(sentence.sentenceId);
+        setIsUploading(false);
+        return;
+      }
 
-    setStatus("pending");
-    onSubmitted(sentence.sentenceId);
+      try {
+        await db.recordings.add({
+          ...payload,
+          audioBlob,
+          status: "pending",
+          lastError: error.message || "Upload failed.",
+          lastAttemptAt: new Date(),
+          createdAt: new Date(),
+        });
+      } catch (dbError) {
+        setUploadError(dbError.message || "Upload failed and the recording could not be saved locally.");
+        setIsUploading(false);
+        return;
+      }
 
-    if (!navigator.onLine) {
-      setIsUploading(false);
-      return;
-    }
-
-    try {
-      await uploadRecording({ blob: audioBlob, ...payload });
-      await db.recordings.update(localId, { status: "synced", syncedAt: new Date() });
-      setStatus("synced");
-    } catch (error) {
-      await db.recordings.update(localId, {
-        status: "pending",
-        lastError: error.message || "Upload failed.",
-        lastAttemptAt: new Date(),
-      });
+      setStatus("pending");
+      onSubmitted(sentence.sentenceId);
       setUploadError(error.message || "Saved on this device. It will upload when the connection is stable.");
       syncPendingRecordings(user.participantId).catch(() => {});
     } finally {

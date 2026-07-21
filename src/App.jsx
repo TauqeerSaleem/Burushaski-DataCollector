@@ -29,12 +29,12 @@ export default function App() {
 
   const refreshPendingSummary = useCallback(async () => {
     if (!participantId) return;
-    const [pending, failedRows] = await Promise.all([
+    const [pendingRows, failedRows] = await Promise.all([
       db.recordings
         .where("status")
         .equals("pending")
         .and((recording) => recording.participantId === participantId)
-        .count(),
+        .toArray(),
       db.recordings
         .where("status")
         .equals("failed")
@@ -44,9 +44,9 @@ export default function App() {
 
     setPendingSummary((current) => ({
       ...current,
-      pending,
+      pending: pendingRows.length,
       failed: failedRows.length,
-      lastError: failedRows[0]?.lastError || current.lastError || "",
+      lastError: pendingRows.find((recording) => recording.lastError)?.lastError || failedRows[0]?.lastError || current.lastError || "",
     }));
   }, [participantId]);
 

@@ -262,26 +262,13 @@ const load = async () => {
       durationMs: recordingDurationMsRef.current,
     };
 
-    // Save locally first so the recording is never lost on upload failure
     let localId;
-    try {
-      localId = await db.recordings.add({
-        ...uploadPayload,
-        audioBlob,
-        status: navigator.onLine ? "uploading" : "pending",
-        lastAttemptAt: navigator.onLine ? new Date() : undefined,
-        createdAt: new Date(),
-      });
-      console.log(`[offline-save] Saved locally (id=${localId}, sentence=${uploadPayload.sentenceId})`);
-    } catch (dbErr) {
-      console.error("Could not save recording locally:", dbErr);
-    }
 
     try {
-      await uploadRecording({ blob: audioBlob, ...uploadPayload });
-
-      if (localId != null) {
-        await db.recordings.update(localId, { status: "synced", syncedAt: new Date() });
+      if (navigator.onLine) {
+        await uploadRecording({ blob: audioBlob, ...uploadPayload });
+      } else {
+        throw new Error("No internet connection. Recording saved on this device.");
       }
 
       setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
@@ -295,9 +282,12 @@ const load = async () => {
       pickNextCard(pickCount);
     } catch (err) {
       console.error("Upload failed:", err);
-      if (err.message?.includes("no longer active")) {
-        // Deactivated prompt — discard the local copy too
-        if (localId != null) await db.recordings.delete(localId);
+      if (err.status === 409) {
+        setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
+        clearRecordingState();
+        setShowSuccess(true);
+        pickNextCard(pickCount);
+      } else if (err.message?.includes("no longer active")) {
         clearRecordingState();
         setAllSentences((current) =>
           (current || []).filter(
@@ -307,8 +297,23 @@ const load = async () => {
           )
         );
         setUploadError("That prompt was deactivated by an administrator. Loading another prompt.");
-      } else if (localId != null) {
+      } else {
         // Recording is safely on device — move on and sync later
+        try {
+          localId = await db.recordings.add({
+            ...uploadPayload,
+            audioBlob,
+            status: "pending",
+            lastError: err.message || "Upload failed.",
+            lastAttemptAt: new Date(),
+            createdAt: new Date(),
+          });
+          console.log(`[offline-save] Saved locally (id=${localId}, sentence=${uploadPayload.sentenceId})`);
+        } catch (dbErr) {
+          console.error("Could not save recording locally:", dbErr);
+          setUploadError(dbErr.message || "Upload failed and the recording could not be saved locally.");
+          return;
+        }
         await db.recordings.update(localId, {
           status: "pending",
           lastError: err.message || "Upload failed.",
@@ -318,8 +323,6 @@ const load = async () => {
         clearRecordingState();
         setShowSavedLocally(true);
         pickNextCard(pickCount);
-      } else {
-        setUploadError(err.message || "Upload failed. Please check your connection and try again.");
       }
     } finally {
       setUploading(false);
