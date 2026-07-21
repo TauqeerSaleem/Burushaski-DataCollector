@@ -2,6 +2,7 @@ import { db } from "../db/indexdb";
 import { uploadRecording } from "./uploadRecording";
 
 const syncInFlightByParticipant = new Map();
+const STALE_UPLOAD_MS = 3 * 60 * 1000;
 
 export async function syncPendingRecordings(participantId = null) {
   const syncKey = participantId || "__all__";
@@ -17,6 +18,27 @@ export async function syncPendingRecordings(participantId = null) {
 }
 
 async function syncPendingRecordingsOnce(participantId) {
+  const staleCutoff = Date.now() - STALE_UPLOAD_MS;
+  const uploadingRows = await db.recordings
+    .where("status")
+    .equals("uploading")
+    .filter((recording) => {
+      if (participantId && recording.participantId !== participantId) return false;
+      const lastAttemptAt = recording.lastAttemptAt || recording.createdAt;
+      const lastAttemptTime = lastAttemptAt ? new Date(lastAttemptAt).getTime() : 0;
+      return !lastAttemptTime || lastAttemptTime < staleCutoff;
+    })
+    .toArray();
+
+  await Promise.all(
+    uploadingRows.map((recording) =>
+      db.recordings.update(recording.id, {
+        status: "pending",
+        lastError: "Previous upload did not finish. Retrying now.",
+      })
+    )
+  );
+
   let query = db.recordings
     .where("status")
     .equals("pending");

@@ -125,7 +125,8 @@ export default function SentenceCard({
       localId = await db.recordings.add({
         ...payload,
         audioBlob,
-        status: "pending",
+        status: navigator.onLine ? "uploading" : "pending",
+        lastAttemptAt: navigator.onLine ? new Date() : undefined,
         createdAt: new Date(),
       });
     } catch (error) {
@@ -147,6 +148,11 @@ export default function SentenceCard({
       await db.recordings.update(localId, { status: "synced", syncedAt: new Date() });
       setStatus("synced");
     } catch (error) {
+      await db.recordings.update(localId, {
+        status: "pending",
+        lastError: error.message || "Upload failed.",
+        lastAttemptAt: new Date(),
+      });
       setUploadError(error.message || "Saved on this device. It will upload when the connection is stable.");
       syncPendingRecordings(user.participantId).catch(() => {});
     } finally {

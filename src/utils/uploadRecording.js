@@ -5,17 +5,35 @@ const API_BASE_URL =
   (import.meta.env.DEV ? "http://localhost:3001" : "");
 
 const MAX_ATTEMPTS = 3;
+const API_TIMEOUT_MS = 20000;
+const STORAGE_UPLOAD_TIMEOUT_MS = 120000;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, ms, message) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
 }
 
 async function apiJson(path, options, attempts = MAX_ATTEMPTS) {
   let lastError;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     try {
-      const response = await fetch(`${API_BASE_URL}${path}`, options);
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        signal: controller.signal,
+      });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         const error = new Error(data.error || `Request failed (${response.status}).`);
@@ -30,7 +48,9 @@ async function apiJson(path, options, attempts = MAX_ATTEMPTS) {
       }
     } catch (error) {
       if (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) throw error;
-      lastError = error;
+      lastError = error.name === "AbortError" ? new Error("The upload server took too long to respond.") : error;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
 
     if (attempt < attempts) await wait(500 * 2 ** (attempt - 1));
@@ -86,11 +106,15 @@ export async function uploadRecording({
     return data.recording;
   }
 
-  const { error: storageError } = await supabase.storage
-    .from("audio-recordings")
-    .uploadToSignedUrl(intent.path, intent.token, blob, {
-      contentType: intent.contentType,
-    });
+  const { error: storageError } = await withTimeout(
+    supabase.storage
+      .from("audio-recordings")
+      .uploadToSignedUrl(intent.path, intent.token, blob, {
+        contentType: intent.contentType,
+      }),
+    STORAGE_UPLOAD_TIMEOUT_MS,
+    "Audio upload took too long. It is saved on this device and will retry."
+  );
 
   if (storageError) {
     // A mobile connection can drop after Storage accepted the bytes but before

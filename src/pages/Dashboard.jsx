@@ -268,7 +268,8 @@ const load = async () => {
       localId = await db.recordings.add({
         ...uploadPayload,
         audioBlob,
-        status: "pending",
+        status: navigator.onLine ? "uploading" : "pending",
+        lastAttemptAt: navigator.onLine ? new Date() : undefined,
         createdAt: new Date(),
       });
       console.log(`[offline-save] Saved locally (id=${localId}, sentence=${uploadPayload.sentenceId})`);
@@ -308,6 +309,11 @@ const load = async () => {
         setUploadError("That prompt was deactivated by an administrator. Loading another prompt.");
       } else if (localId != null) {
         // Recording is safely on device — move on and sync later
+        await db.recordings.update(localId, {
+          status: "pending",
+          lastError: err.message || "Upload failed.",
+          lastAttemptAt: new Date(),
+        });
         setRecordedIds((prev) => [...prev, currentCard.prompt_id]);
         clearRecordingState();
         setShowSavedLocally(true);
