@@ -107,6 +107,11 @@ export async function getUserContributions(username) {
   return data.contributions || [];
 }
 
+function cleanMimeType(value, fallback = "audio/webm") {
+  const mimeType = String(value || fallback).split(";")[0].trim().toLowerCase();
+  return mimeType || fallback;
+}
+
 export async function getResearcherTasks(participantId) {
   const data = await request(
     `/api/researcher/tasks?participantId=${encodeURIComponent(participantId)}`,
@@ -138,7 +143,7 @@ export async function submitVisualGenomeResponse(id, participantId, payload) {
   const response = await fetch(`${API_BASE_URL}/api/researcher/visual-genome-tasks/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: {
-      "Content-Type": payload.audioBlob?.type || "audio/webm",
+      "Content-Type": cleanMimeType(payload.audioBlob?.type),
       "X-Participant-Id": participantId,
       "X-Transcript": encodeURIComponent(payload.transcript || ""),
       "X-Notes": encodeURIComponent(payload.notes || ""),

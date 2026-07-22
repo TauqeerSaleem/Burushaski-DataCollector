@@ -27,6 +27,11 @@ function encodedHeader(value) {
   return encodeURIComponent(value == null ? "" : String(value));
 }
 
+function cleanMimeType(value, fallback = "audio/webm") {
+  const mimeType = String(value || fallback).split(";")[0].trim().toLowerCase();
+  return mimeType || fallback;
+}
+
 async function apiJson(path, options, attempts = MAX_ATTEMPTS) {
   let lastError;
 
@@ -163,7 +168,7 @@ export async function uploadRecording({
     suggestedCorrection,
     promptType,
     durationMs,
-    contentType: blob.type || "audio/webm",
+    contentType: cleanMimeType(blob.type),
     fileSize: blob.size,
   };
 

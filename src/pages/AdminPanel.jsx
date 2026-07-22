@@ -1881,7 +1881,6 @@ function DataTab({
   const [activeView, setActiveView] = useState("records");
   const [filters, setFilters] = useState({ search: "", moduleId: "all", participantId: "all", dialect: "all", role: "all" });
   const [correctionFilters, setCorrectionFilters] = useState({ search: "", participantId: "all", moduleId: "all", promptId: "all" });
-  const [recordSort, setRecordSort] = useState({ key: "createdAt", direction: "desc" });
   const [correctionSort, setCorrectionSort] = useState({ key: "count", direction: "desc" });
   const [assignmentRecording, setAssignmentRecording] = useState(null);
   const recordings = useMemo(() => recordsPage.rows || [], [recordsPage.rows]);
@@ -1893,21 +1892,10 @@ function DataTab({
     () => uniq(prompts.filter((prompt) => correctionFilters.moduleId === "all" || prompt.moduleId === correctionFilters.moduleId).map((prompt) => prompt.promptId)),
     [correctionFilters.moduleId, prompts]
   );
-  const sortedRecordings = useMemo(
-    () => sortedRows(recordings, recordSort, (recording, key) => recording[key] || ""),
-    [recordings, recordSort]
-  );
   const sortedCorrectionGroups = useMemo(
     () => sortedRows(correctionGroups, correctionSort, (group, key) => (key === "count" ? Number(group.count || 0) : group[key] || "")),
     [correctionGroups, correctionSort]
   );
-
-  const toggleRecordSort = (key) => {
-    setRecordSort((current) => ({
-      key,
-      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
-    }));
-  };
 
   const applyRecordFilters = async (page = 1) => {
     await onRecordsPage(page, {
@@ -2115,15 +2103,13 @@ function DataTab({
                 ),
               },
             ]}
-            rows={sortedRecordings}
+            rows={recordings}
             emptyText="No recordings yet."
-            sort={recordSort}
-            onSort={toggleRecordSort}
           />
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-neutral-500">
-              Showing {sortedRecordings.length} rows on this page from {recordsPage.total || 0} active matching records.
+              Showing {recordings.length} rows on this page from {recordsPage.total || 0} active matching records.
             </p>
             <div className="flex gap-2">
               <button

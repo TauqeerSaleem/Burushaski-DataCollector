@@ -24,6 +24,7 @@ const MAX_DATA_PAGE_SIZE = 200;
 const EXPORT_LIMIT = 50000;
 const MAX_PROMPT_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_RECORDING_BYTES = 30 * 1024 * 1024;
+const MIN_RECORDING_BYTES = 512;
 const MAX_RECORDING_MS = 5 * 60 * 1000;
 const PROMPT_MEDIA_SIGNED_URL_TTL_SECONDS = 60 * 60;
 const RESEARCH_TASK_TYPES = new Set([
@@ -241,6 +242,10 @@ function recordingExtension(contentType) {
       : contentType.includes("wav")
         ? "wav"
         : "webm";
+}
+
+function isRawAudioBuffer(value) {
+  return Buffer.isBuffer(value);
 }
 
 function cryptoRandomId() {
@@ -1217,7 +1222,7 @@ async function validateRecordingRequest(body, res) {
     res.status(413).json({ error: "Recordings must be 5 minutes or shorter." });
     return null;
   }
-  if (fileSize < 1 || fileSize > MAX_RECORDING_BYTES) {
+  if (fileSize < MIN_RECORDING_BYTES || fileSize > MAX_RECORDING_BYTES) {
     res.status(413).json({ error: "The recording file is empty or too large." });
     return null;
   }
@@ -1357,7 +1362,7 @@ router.post("/recordings/complete", async (req, res) => {
     }
     const storedSize = storedFile.metadata?.size != null ? Number(storedFile.metadata.size) : null;
     const storedContentType = cleanMimeType(storedFile.metadata?.mimetype);
-    if (storedSize !== null && (storedSize < 1 || storedSize > MAX_RECORDING_BYTES)) {
+    if (storedSize !== null && (storedSize < MIN_RECORDING_BYTES || storedSize > MAX_RECORDING_BYTES)) {
       await supabase.storage.from("audio-recordings").remove([validated.path]);
       return res.status(400).json({ error: "The uploaded audio file is empty or too large. Please record it again." });
     }
@@ -1435,7 +1440,11 @@ router.post(
         return res.status(415).json({ error: "Unsupported recording format." });
       }
 
-      if (!req.body || req.body.length === 0) {
+      if (!isRawAudioBuffer(req.body)) {
+        throw new Error("Recording upload body was not parsed as raw audio.");
+      }
+
+      if (req.body.length < MIN_RECORDING_BYTES) {
         return res.status(400).json({ error: "No recording file received." });
       }
 
@@ -1611,7 +1620,11 @@ router.post(
         return res.status(415).json({ error: "Unsupported feedback audio format." });
       }
 
-      if (!req.body || req.body.length === 0) {
+      if (!isRawAudioBuffer(req.body)) {
+        return res.status(400).json({ error: "Feedback audio was not received correctly. Please try again." });
+      }
+
+      if (req.body.length < MIN_RECORDING_BYTES) {
         return res.status(400).json({ error: "No feedback audio received." });
       }
 
@@ -3228,7 +3241,11 @@ router.patch(
       return res.status(415).json({ error: "Unsupported VisualGenomeDB audio format." });
     }
 
-    if (!req.body || req.body.length === 0) {
+    if (!isRawAudioBuffer(req.body)) {
+      return res.status(400).json({ error: "VisualGenomeDB audio was not received correctly. Please try again." });
+    }
+
+    if (req.body.length < MIN_RECORDING_BYTES) {
       return res.status(400).json({ error: "Record your response before submitting." });
     }
 
